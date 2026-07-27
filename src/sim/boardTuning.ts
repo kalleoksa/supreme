@@ -50,6 +50,7 @@ export interface BoardTuning {
 
   // --- The charged ollie
   CHARGE_TIME: number;
+  CHARGE_AIR_GRACE: number;
   CHARGE_FRICTION: number;
   CHARGE_TURN_MUL: number;
   MIN_POP: number;
@@ -173,6 +174,19 @@ export const DEFAULT_TUNING: BoardTuning = {
   AIR_DRAG: 0.0012,
 
   CHARGE_TIME: 0.55,
+  /**
+   * How long the board may be off the ground without losing its charge, in seconds.
+   *
+   * Without a grace period the charge route is unusable at speed, and measurably so:
+   * the test slope has a crest roughly every 22 m, so at 120 km/h the board is briefly
+   * light several times a second, and every one of those wiped the charge. Holding the
+   * button did nothing and the jump read as broken.
+   *
+   * A real launch still discards it -- charge is payment for a pop, and banking one
+   * through a genuine air would hand out free height on landing. This only forgives
+   * skimming over ripples.
+   */
+  CHARGE_AIR_GRACE: 0.22,
   CHARGE_FRICTION: 0.7,
   CHARGE_TURN_MUL: 0.85,
   MIN_POP: 2.0,

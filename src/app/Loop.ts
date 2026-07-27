@@ -3,6 +3,16 @@ import type { Clock } from './Clock.js';
 
 export interface LoopHandlers {
   /**
+   * Called once per frame with the frame's timestamp, before any steps run.
+   *
+   * This is where hardware gets read. It has to be a distinct hook rather than
+   * something `step` does, because the input layer needs the *frame's* start time to
+   * place button edges in the right sub-frame slot -- and `step` is called zero to
+   * MAX_STEPS times, so it has no single answer for when the frame began.
+   */
+  beginFrame?(now: number): void;
+
+  /**
    * Advance the simulation by exactly FIXED_DT. Called 0..MAX_STEPS times per
    * frame. `tick` is the monotonic simulation tick index.
    *
@@ -71,6 +81,11 @@ export class Loop {
     if (frameDt > MAX_FRAME_DT) frameDt = MAX_FRAME_DT;
 
     this.accumulator += frameDt;
+
+    // Read hardware once, before stepping. Skipping this leaves the input layer with
+    // no frame origin, and every button edge then fails its tick-window test -- which
+    // is silent, and means no key ever reaches the simulation.
+    this.handlers.beginFrame?.(now);
 
     let steps = 0;
     while (this.accumulator >= FIXED_DT && steps < MAX_STEPS) {

@@ -4,6 +4,7 @@ import type { InputState } from '../input/InputState.js';
 import { TrickState, type BoardState } from './BoardState.js';
 import type { BoardTuning } from './boardTuning.js';
 import { EventBuffer, SimEventKind } from './events.js';
+import { resolveOllie } from './Ollie.js';
 import type { TerrainSampler } from './Terrain.js';
 
 const GRAVITY = 9.81;
@@ -162,6 +163,21 @@ export function stepBoard(
   state.edge += (edgeTarget - state.edge) * (1 - expDecay(t.EDGE_RATE, dt));
   if (carveStrength > 0) state.edgeHoldTime += dt;
   else state.edgeHoldTime = 0;
+
+  // ------------------------------------------------- 4b. Charge and pop
+  // Resolved before the force integration so a release lands in the same step the
+  // button came up. Deferring it by a step would add latency in exactly the place the
+  // player is being asked for precision.
+  const ollie = resolveOllie(state, input, terrain, dt, t, ctx.events);
+  if (ollie.pop > 0) {
+    state.vel.x += ollie.upX * ollie.pop;
+    state.vel.y += ollie.upY * ollie.pop;
+    state.vel.z += ollie.upZ * ollie.pop;
+    // Force the air state immediately: without this the ground snap below sees a board
+    // still within SNAP_TOL of the surface and swallows the pop whole.
+    state.grounded = false;
+    state.clearance = Math.max(state.clearance, t.SNAP_TOL + 1e-3);
+  }
 
   const tucking = Math.max(0, input.steerY);
   const braking = Math.max(0, -input.steerY);

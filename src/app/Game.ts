@@ -4,31 +4,15 @@ import { RealClock } from './Clock.js';
 import { FIXED_DT } from './config.js';
 import { createInputState } from '../input/InputState.js';
 
-/** Scripted input for `Game.simulate`, used by diagnostics and e2e tests. */
-export interface ScriptedInput {
-  steerX?: number;
-  steerY?: number;
-  carve?: boolean;
-  jump?: boolean;
-  trick?: boolean;
-  carveAnalog?: number;
-  /**
-   * Fire a carve *release* edge on the first simulated step.
-   *
-   * Held state alone cannot express this, and without it the pump -- the entire
-   * reward half of the carve model -- is unreachable from a scripted run, so nothing
-   * outside the unit tests could ever exercise it.
-   */
-  carveReleased?: boolean;
-  /** Fire a jump release edge on the first step: the pop, once Phase 4 lands. */
-  jumpReleased?: boolean;
-}
 import { Renderer } from '../render/Renderer.js';
 import { Environment } from '../render/Environment.js';
 import { TerrainMesh } from '../render/TerrainMesh.js';
 import { RiderView } from '../render/RiderView.js';
 import { ChaseCamera } from '../render/ChaseCamera.js';
 import { Spray } from '../render/Spray.js';
+import { WorldHints } from '../render/WorldHints.js';
+import { timeToGround } from '../sim/Ollie.js';
+import { SimEventKind } from '../sim/events.js';
 import type { DebugPanel } from '../hud/DebugPanel.js';
 import { FlyCamera } from '../dev/FlyCamera.js';
 import { buildTestSlope, type TestSlope } from '../track/testSlope.js';
@@ -54,6 +38,28 @@ export interface GameOptions {
   hud: HTMLElement;
   /** Show the diagnostic readout and allow toggling the free-fly camera. */
   debug?: boolean;
+}
+
+/** Scripted input for `Game.simulate`, used by diagnostics and e2e tests. */
+export interface ScriptedInput {
+  steerX?: number;
+  steerY?: number;
+  carve?: boolean;
+  jump?: boolean;
+  trick?: boolean;
+  carveAnalog?: number;
+  /**
+   * Fire a carve *release* edge on the first simulated step.
+   *
+   * Held state alone cannot express this, and without it the pump -- the entire reward
+   * half of the carve model -- is unreachable from a scripted run, so nothing outside
+   * the unit tests could ever exercise it.
+   */
+  carveReleased?: boolean;
+  /** Fire a jump press edge on the first step, to begin charging. */
+  jumpPressed?: boolean;
+  /** Fire a jump release edge on the first step: the pop. */
+  jumpReleased?: boolean;
 }
 
 /**
@@ -85,6 +91,7 @@ export class Game implements LoopHandlers {
   private readonly riderView: RiderView;
   private readonly chase: ChaseCamera;
   private readonly spray: Spray;
+  private readonly hints: WorldHints;
   private readonly hud: Hud;
   private readonly flyCamera: FlyCamera;
   private tuningPanel: DebugPanel | undefined;
@@ -136,6 +143,9 @@ export class Game implements LoopHandlers {
 
     this.spray = new Spray(this.environment);
     this.renderer.scene.add(this.spray.points);
+
+    this.hints = new WorldHints(this.field, this.tuning);
+    this.renderer.scene.add(this.hints.group);
 
     this.hud = new Hud(options.hud);
 
@@ -195,6 +205,13 @@ export class Game implements LoopHandlers {
     }
   };
 
+  beginFrame(now: number): void {
+    // Poll the backends and anchor the frame's time origin. Without this call the
+    // router has no frame start, so every button edge's timestamp fails its
+    // tick-window comparison and no input reaches the simulation at all.
+    this.input.poll(now);
+  }
+
   step(_tick: number, dt: number, indexInBatch: number): void {
     // `indexInBatch`, not the loop's step counter: that counter only updates once the
     // batch finishes, so using it here would place every edge in the previous
@@ -229,6 +246,7 @@ export class Game implements LoopHandlers {
 
     this.riderView.update(this.viewBoard, frameDt);
     this.spray.update(this.viewBoard, frameDt);
+    this.hints.update(this.viewBoard);
 
     if (this.flyCamera.enabled) this.flyCamera.update(frameDt);
     else this.chase.update(this.viewBoard, frameDt);
@@ -236,8 +254,23 @@ export class Game implements LoopHandlers {
     // Drain before clearing: events are the only channel from the simulation to
     // presentation, and a 30 fps display must not miss one that happened on an
     // intermediate substep.
+    this.stepCtx.events.forEach((e) => {
+      if (e.kind === SimEventKind.Pop && e.a > 0) {
+        // A pop or a landing punches the field of view briefly. Cheaper than a camera
+        // move and it does not disturb the framing the player is reading.
+        this.chase.kick();
+        // Feed the timing back so the lip-band assist fades as the player improves.
+        this.hints.recordPop(e.b);
+      }
+    });
     this.hud.drain(this.stepCtx.events);
-    this.hud.update(this.viewBoard, frameDt);
+    this.hud.update(
+      this.viewBoard,
+      frameDt,
+      this.board.grounded
+        ? 0
+        : timeToGround(this.board, this.field, 9.81 * this.tuning.AIR_GRAVITY_SCALE),
+    );
     this.stepCtx.events.clear();
 
     const cam = this.renderer.camera.position;
@@ -313,8 +346,8 @@ export class Game implements LoopHandlers {
     input.jump.held = script.jump ?? false;
     input.trick.held = script.trick ?? false;
     input.carve.pressed = false;
-    input.jump.pressed = false;
     input.trick.pressed = false;
+    input.jump.pressed = script.jumpPressed ?? false;
     input.trick.released = false;
     // Release edges fire once, on the first step only -- an edge that persisted across
     // every step would pay the pump out repeatedly.
@@ -330,6 +363,7 @@ export class Game implements LoopHandlers {
       // router delivers exactly one edge per physical release.
       input.carve.released = false;
       input.jump.released = false;
+      input.jump.pressed = false;
       if (!this.field.contains(this.board.pos.x, this.board.pos.z)) {
         this.respawn();
         break;
@@ -351,6 +385,7 @@ export class Game implements LoopHandlers {
     this.tuningPanel?.dispose();
     this.hud.dispose();
     this.spray.dispose();
+    this.hints.dispose();
     this.riderView.dispose();
     this.terrain.dispose();
     this.renderer.dispose();

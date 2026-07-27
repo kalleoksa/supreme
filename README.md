@@ -144,6 +144,17 @@ pass. A speed advantage decays back toward terminal velocity, so the pump's valu
 transient — it compounds across linked turns rather than showing up after a long
 runout.
 
+### Keyboard input had never worked
+
+Worth recording as a process lesson. `InputRouter.poll()` was never called anywhere, so
+the router had no frame time origin, every button edge failed its tick-window
+comparison, and **no key press had ever reached the simulation**. It survived three
+phases because every e2e test drove the game through `simulate()`, which writes a
+scripted `InputState` directly and bypasses the router entirely.
+
+There are now tests that press a real key and assert the simulation responds. If you add
+gameplay tests, at least one of them must go through the real input path.
+
 ### Terrain is tuned against measurements
 
 Crest spacing along the fall line, grade distribution, and stall/uphill fractions
@@ -169,7 +180,7 @@ and tricks, a timer and a finish line.
 - [x] Phase 1 — fixed-timestep loop, heightfield sampler, chunked terrain
 - [x] Phase 2 — input, first ride: it plays, at ~87 km/h
 - [x] Phase 3 — carve model: a cost, a reward, and a way to notice it
-- [ ] Phase 4 — charged ollie
+- [x] Phase 4 — charged ollie: the mechanic this was all built around
 - [ ] Phase 5 — tricks and landing
 - [ ] Phase 6 — the authored track
 - [ ] Phase 7 — ghost recording

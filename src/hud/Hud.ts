@@ -20,13 +20,23 @@ export class Hud {
   private readonly edgeFill: HTMLElement;
   private readonly airEl: HTMLElement;
   private readonly pumpEl: HTMLElement;
+  private readonly popEl: HTMLElement;
+  private readonly ttgEl: HTMLElement;
+  private readonly ttgFill: HTMLElement;
+  private readonly chargeEl: HTMLElement;
+  private readonly chargeFill: HTMLElement;
 
   private lastSpeed = '';
   private lastTime = '';
   private lastEdge = -1;
   private lastAir = '';
+  private lastPop = '';
+  private lastTtg = -1;
+  private lastCharge = -1;
   private pumpTimer = 0;
   private pumpFrames = 0;
+  private popTimer = 0;
+  private popFrames = 0;
 
   /** Seconds the pump flash and its label stay up. */
   private static readonly FLASH_TIME = 0.55;
@@ -48,6 +58,9 @@ export class Hud {
       <div class="hud-time">0.00</div>
       <div class="hud-air"></div>
       <div class="hud-pump">PUMP</div>
+      <div class="hud-pop"></div>
+      <div class="hud-ttg"><div class="hud-ttg-fill"></div></div>
+      <div class="hud-charge"><div class="hud-charge-fill"></div></div>
       <div class="hud-edge"><div class="hud-edge-fill"></div></div>
     `;
     parent.appendChild(this.root);
@@ -57,6 +70,27 @@ export class Hud {
     this.edgeFill = this.root.querySelector('.hud-edge-fill') as HTMLElement;
     this.airEl = this.root.querySelector('.hud-air') as HTMLElement;
     this.pumpEl = this.root.querySelector('.hud-pump') as HTMLElement;
+    this.popEl = this.root.querySelector('.hud-pop') as HTMLElement;
+    this.ttgEl = this.root.querySelector('.hud-ttg') as HTMLElement;
+    this.ttgFill = this.root.querySelector('.hud-ttg-fill') as HTMLElement;
+    this.chargeEl = this.root.querySelector('.hud-charge') as HTMLElement;
+    this.chargeFill = this.root.querySelector('.hud-charge-fill') as HTMLElement;
+  }
+
+  /**
+   * Describe a pop in terms the player can act on.
+   *
+   * The number that matters is not the height -- it is *where the height came from*.
+   * Telling someone "PERFECT LIP" when they released on a crest with no charge, versus
+   * "CHARGED" when they crouched for it, is the whole feedback loop for learning the
+   * timing. A bare height reading teaches nothing, which is precisely how the original
+   * ended up feeling arbitrary.
+   */
+  private static describePop(lipQuality: number, charge: number): string {
+    if (lipQuality >= 0.8) return `PERFECT LIP · ${Math.round(lipQuality * 100)}`;
+    if (lipQuality >= 0.45) return `GOOD LIP · ${Math.round(lipQuality * 100)}`;
+    if (lipQuality >= 0.15) return 'EARLY';
+    return charge > 0.6 ? 'CHARGED' : 'FLAT POP';
   }
 
   /**
@@ -73,11 +107,25 @@ export class Hud {
       if (e.kind === SimEventKind.PumpBoost) {
         this.pumpTimer = Hud.FLASH_TIME;
         this.pumpFrames = Hud.FLASH_MIN_FRAMES;
+      } else if (e.kind === SimEventKind.Pop && e.a > 0) {
+        const label = Hud.describePop(e.b, e.c);
+        if (label !== this.lastPop) {
+          this.popEl.textContent = label;
+          this.lastPop = label;
+        }
+        this.popEl.classList.toggle('great', e.b >= 0.8);
+        this.popTimer = Hud.FLASH_TIME * 1.6;
+        this.popFrames = Hud.FLASH_MIN_FRAMES;
       }
     });
   }
 
-  update(state: BoardState, dt: number): void {
+  /**
+   * @param timeToGround Predicted seconds until the board meets the surface, or 0 when
+   *   grounded. Passed in rather than computed here because the prediction needs the
+   *   terrain, and the HUD has no business knowing about it.
+   */
+  update(state: BoardState, dt: number, timeToGround = 0): void {
     const kmh = Math.round(Math.hypot(state.vel.x, state.vel.z) * 3.6);
     const speed = String(kmh);
     if (speed !== this.lastSpeed) {
@@ -115,11 +163,52 @@ export class Hud {
       this.edgeFill.classList.toggle('skidding', state.skid > 0.45);
     }
 
+    if (this.popTimer > 0 || this.popFrames > 0) {
+      this.popTimer = Math.max(0, this.popTimer - dt);
+      this.popFrames = Math.max(0, this.popFrames - 1);
+      this.popEl.classList.add('visible');
+    } else {
+      this.popEl.classList.remove('visible');
+    }
+
+    // Charge meter.
+    //
+    // On screen rather than on the snow. A ring decal at the rider's feet was built
+    // first, per the original design, and could not be seen: from a camera 3.4 m up and
+    // 8 m back a ground ring is nearly edge-on and mostly behind the rider. The crouch
+    // animation carries the same information diegetically; this carries the precision.
+    const chargePct = Math.round(state.jumpCharge * 100);
+    const showCharge = chargePct > 1;
+    this.chargeEl.classList.toggle('visible', showCharge);
+    if (chargePct !== this.lastCharge) {
+      this.chargeFill.style.width = `${chargePct}%`;
+      this.lastCharge = chargePct;
+    }
+    // Full charge is worth signalling: past it, holding longer buys nothing.
+    this.chargeFill.classList.toggle('full', state.jumpCharge >= 0.999);
+
     // Air time, shown only in the air, so it reads as an event rather than clutter.
     const air = state.grounded ? '' : `AIR ${state.airTime.toFixed(1)}s`;
     if (air !== this.lastAir) {
       this.airEl.textContent = air;
       this.lastAir = air;
+    }
+
+    // Time to ground. This is the piece that lets a player see whether a rotation will
+    // finish before impact, instead of finding out when they land -- the single most
+    // direct answer to "it was far too easy to get it wrong".
+    const showTtg = !state.grounded && timeToGround > 0.05;
+    this.ttgEl.classList.toggle('visible', showTtg);
+    if (showTtg) {
+      // Normalized against 2 s, which is a big air; longer just pins the bar full.
+      const ttgPct = Math.round(Math.min(timeToGround / 2, 1) * 100);
+      if (ttgPct !== this.lastTtg) {
+        this.ttgFill.style.width = `${ttgPct}%`;
+        this.lastTtg = ttgPct;
+      }
+      // Red when impact is imminent: that is when a rotation still in progress becomes
+      // a crash rather than a landing.
+      this.ttgFill.classList.toggle('imminent', timeToGround < 0.35);
     }
   }
 

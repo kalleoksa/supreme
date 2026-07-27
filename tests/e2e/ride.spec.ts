@@ -127,6 +127,65 @@ test.describe('riding', () => {
     expect(Math.abs(displayed - shown.kmh)).toBeLessThan(3);
   });
 
+  test('real keyboard input reaches the simulation', async ({ page }) => {
+    // This is the gap that let a total input failure ship unnoticed. Every other test
+    // here drives the sim through `simulate()`, which writes a scripted InputState
+    // directly and bypasses the router entirely -- so the fact that `InputRouter.poll()`
+    // was never called, leaving the router with no frame origin and silently discarding
+    // every button edge, was invisible to the whole suite.
+    //
+    // Anything that asserts on gameplay must therefore be careful not to be the only
+    // check: at least one test has to press an actual key.
+    const held = await page.evaluate(async () => {
+      const h = window.__GAME!;
+      h.respawn();
+      // Get the rider moving so the charge is not competing with a standing start.
+      h.simulate(120 * 5, { steerY: 1 });
+      return h.riderState()!.kmh;
+    });
+    expect(held).toBeGreaterThan(20);
+
+    await page.keyboard.down('Space');
+    // Real wall time, because the point is the real input path end to end.
+    await page.waitForTimeout(1200);
+
+    const charging = await page.evaluate(() => {
+      const b = window.__GAME!.game!.board;
+      return { charge: b.jumpCharge, trickState: b.trickState };
+    });
+    await page.keyboard.up('Space');
+
+    // TrickState.Charging === 1. A charge above zero proves the press edge arrived, was
+    // held across ticks, and drove the state machine.
+    expect(charging.trickState).toBe(1);
+    expect(charging.charge).toBeGreaterThan(0.05);
+  });
+
+  test('steering by keyboard turns the rider', async ({ page }) => {
+    await page.evaluate(() => {
+      const h = window.__GAME!;
+      h.respawn();
+      h.simulate(120 * 5, { steerY: 1 });
+    });
+    await page.keyboard.down('ArrowRight');
+    await page.waitForTimeout(1500);
+    const turning = await page.evaluate(() => {
+      const b = window.__GAME!.game!.board;
+      return { yawRate: b.yawRate };
+    });
+    await page.keyboard.up('ArrowRight');
+
+    // Assert on yaw *rate*, not accumulated yaw. Under software GL only a fraction of a
+    // second of simulated time passes per second of wall time, so the accumulated angle
+    // is small and the skid weathervane cancels much of it. The rate is the direct
+    // response to the input and is unambiguous.
+    //
+    // Positive means turning toward +yaw, which is what ArrowRight asks for. The steer
+    // axis ramps rather than snapping, so a non-zero rate also proves poll() runs every
+    // frame, since that is where the ramp is computed.
+    expect(turning.yawRate).toBeGreaterThan(0.2);
+  });
+
   test('respawn returns the rider to the start gate', async ({ page }) => {
     const result = await page.evaluate(() => {
       const h = window.__GAME!;
