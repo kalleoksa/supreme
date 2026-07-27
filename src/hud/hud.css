@@ -1,0 +1,676 @@
+.hud-root {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 2px 10px rgb(4 8 14 / 55%);
+}
+
+/* Bottom-centre: near where the eyes already are, and out of the way of the
+   terrain ahead, which is what the player is actually reading at speed. */
+.hud-speed {
+  position: absolute;
+  left: 50%;
+  bottom: 2.2rem;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+.hud-speed-value {
+  font-size: clamp(2.4rem, 5vw, 3.6rem);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.hud-unit {
+  font-size: 0.75rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  opacity: 0.65;
+}
+
+.hud-time {
+  position: absolute;
+  top: 1.6rem;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: clamp(1.4rem, 3vw, 2rem);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.hud-air {
+  position: absolute;
+  top: 30%;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  opacity: 0.8;
+}
+
+.hud-edge {
+  position: absolute;
+  left: 50%;
+  bottom: 1.4rem;
+  transform: translateX(-50%);
+  width: min(18rem, 44vw);
+  height: 4px;
+  border-radius: 2px;
+  background: rgb(255 255 255 / 14%);
+  overflow: hidden;
+}
+
+.hud-edge-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 2px;
+  background: #7fd0ff;
+  /* Transform/opacity only elsewhere in the HUD; width here is cheap because the
+     element is tiny and it is the clearest way to read a meter. */
+  transition: background-color 120ms ease;
+}
+
+/* Skidding is a warning, not a reward: the colour shift is how a player learns that
+   sliding sideways is costing them the speed the meter otherwise earns. */
+.hud-edge-fill.skidding {
+  background: #ffb457;
+}
+
+/* The pump flash. Deliberately the loudest thing the edge meter ever does: it is the
+   only signal that releasing a committed edge onto the fall line paid speed back,
+   and a player has to notice it to ever learn the mechanic. */
+.hud-edge-fill.pumped {
+  background: #7cf6b0;
+  box-shadow: 0 0 12px 2px rgb(124 246 176 / 70%);
+}
+
+.hud-pump {
+  position: absolute;
+  left: 50%;
+  bottom: 5.6rem;
+  transform: translate(-50%, 0.4rem);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  color: #7cf6b0;
+  opacity: 0;
+  transition:
+    opacity 140ms ease,
+    transform 140ms ease;
+}
+
+.hud-pump.visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+/* Pop feedback. Says *why* the jump was as big as it was, which is the only way the
+   lip timing is ever learned. */
+.hud-pop {
+  position: absolute;
+  left: 50%;
+  top: 38%;
+  transform: translate(-50%, 0.5rem);
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  color: #cfe8ff;
+  opacity: 0;
+  transition:
+    opacity 120ms ease,
+    transform 200ms ease;
+}
+
+.hud-pop.visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.hud-pop.great {
+  color: #7cf6b0;
+  text-shadow:
+    0 0 14px rgb(124 246 176 / 60%),
+    0 2px 10px rgb(4 8 14 / 55%);
+}
+
+/* Time to ground. Sits just under the air-time readout, in the middle of the screen
+   where the eyes already are during a jump. */
+.hud-ttg {
+  position: absolute;
+  left: 50%;
+  top: 34%;
+  transform: translateX(-50%);
+  width: min(11rem, 30vw);
+  height: 3px;
+  border-radius: 2px;
+  background: rgb(255 255 255 / 16%);
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.hud-ttg.visible {
+  opacity: 1;
+}
+
+.hud-ttg-fill {
+  height: 100%;
+  width: 0;
+  background: #cfe8ff;
+}
+
+.hud-ttg-fill.imminent {
+  background: #ff7a6b;
+}
+
+/* Charge meter. Sits directly above the speed readout, so charge and speed -- the two
+   things the charge trade is between -- are read in one glance. */
+.hud-charge {
+  position: absolute;
+  left: 50%;
+  bottom: 6.4rem;
+  transform: translateX(-50%);
+  width: min(9rem, 26vw);
+  height: 6px;
+  border-radius: 3px;
+  background: rgb(8 14 22 / 45%);
+  border: 1px solid rgb(255 255 255 / 18%);
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 100ms ease;
+}
+
+.hud-charge.visible {
+  opacity: 1;
+}
+
+.hud-charge-fill {
+  height: 100%;
+  width: 0;
+  background: #4fb0ff;
+}
+
+.hud-charge-fill.full {
+  background: #ffd24a;
+}
+
+/* Trick ribbon: what is being performed, right now, mid-air. */
+.hud-ribbon {
+  position: absolute;
+  left: 50%;
+  bottom: 8.6rem;
+  transform: translateX(-50%);
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: #ffe9a8;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 100ms ease;
+}
+
+.hud-ribbon.visible {
+  opacity: 1;
+}
+
+/* Landing banner. The reason line is the point of it: a quality word alone tells the
+   player they failed, not what to change. */
+.hud-banner {
+  position: absolute;
+  left: 50%;
+  top: 44%;
+  transform: translate(-50%, 0.5rem);
+  text-align: center;
+  opacity: 0;
+  transition:
+    opacity 110ms ease,
+    transform 220ms ease;
+}
+
+.hud-banner.visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.hud-banner-title {
+  font-size: clamp(1.3rem, 3vw, 2rem);
+  font-weight: 800;
+  letter-spacing: 0.14em;
+}
+
+.hud-banner-reason {
+  margin-top: 0.2rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  opacity: 0.9;
+}
+
+.hud-banner.perfect .hud-banner-title {
+  color: #7cf6b0;
+}
+
+.hud-banner.crash .hud-banner-title {
+  color: #ff7a6b;
+}
+
+.hud-banner.crash .hud-banner-reason {
+  color: #ffb0a6;
+}
+
+.hud-score {
+  position: absolute;
+  top: 1.6rem;
+  right: 1.4rem;
+  font-size: clamp(1.1rem, 2.4vw, 1.6rem);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+/* ---- Race layer: count, splits, boundary warning, results. ---- */
+
+/* The start count. Large and central because for three seconds it is the only thing
+   on screen worth reading, and it has to be gone before the run needs the space. */
+.hud-countdown {
+  position: absolute;
+  left: 50%;
+  top: 40%;
+  transform: translate(-50%, -50%) scale(0.85);
+  font-size: clamp(4rem, 12vw, 9rem);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  opacity: 0;
+  transition:
+    opacity 140ms ease,
+    transform 260ms cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+
+.hud-countdown.visible {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+.hud-countdown.go {
+  color: #7cf6b0;
+  font-size: clamp(3rem, 9vw, 6.5rem);
+  letter-spacing: 0.06em;
+}
+
+/* Splits sit under the clock, which is where the eyes go when the clock matters. */
+.hud-split {
+  position: absolute;
+  left: 50%;
+  top: 4.6rem;
+  transform: translate(-50%, -0.4rem);
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  white-space: nowrap;
+  opacity: 0;
+  transition:
+    opacity 140ms ease,
+    transform 220ms ease;
+}
+
+.hud-split.visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.hud-split.ahead {
+  color: #7cf6b0;
+}
+
+.hud-split.behind {
+  color: #ffb457;
+}
+
+/* One slot for both the boundary countdown and the wrong-way warning: they mean the
+   same thing to the player, and two competing instructions at speed help nobody. */
+.hud-warn {
+  position: absolute;
+  left: 50%;
+  top: 22%;
+  transform: translateX(-50%);
+  font-size: 1.1rem;
+  font-weight: 800;
+  letter-spacing: 0.24em;
+  color: #ff9f6b;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.hud-warn.visible {
+  opacity: 1;
+}
+
+/* Out-of-bounds vignette. A colour cue at the edge of vision, so the message is felt
+   before it is read -- and no invisible wall, which the freedom-of-line pillar rules
+   out. The terrain is what turns you back; this only tells you the clock is watching. */
+.hud-root.oob::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, rgb(0 0 0 / 0%) 45%, rgb(210 90 40 / 42%) 100%);
+  animation: hud-oob-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes hud-oob-pulse {
+  0%,
+  100% {
+    opacity: 0.6;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hud-root.oob::after {
+    animation: none;
+  }
+}
+
+/* Also `display`, and for the same reason as the settings panel: a starved animation timeline
+ * on a slow machine would leave a finished run's time faded out to nothing. The result of a
+ * race is not something to risk on a transition. */
+.hud-results {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  min-width: min(20rem, 70vw);
+  padding: 1.4rem 1.8rem;
+  text-align: center;
+  background: rgb(6 10 16 / 78%);
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 8px;
+  display: none;
+}
+
+.hud-results.visible {
+  display: block;
+}
+
+.hud-results-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.32em;
+  opacity: 0.6;
+}
+
+.hud-results-time {
+  margin-top: 0.3rem;
+  font-size: clamp(2.2rem, 5vw, 3.2rem);
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+}
+
+.hud-results.best .hud-results-time {
+  color: #7cf6b0;
+}
+
+.hud-results-best {
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  opacity: 0.85;
+}
+
+.hud-results-rows {
+  margin-top: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+}
+
+.hud-results-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1.2rem;
+}
+
+.hud-results-row span:first-child {
+  opacity: 0.6;
+}
+
+.hud-results-hint {
+  margin-top: 1rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.22em;
+  opacity: 0.5;
+}
+
+/* ---- Comfort settings. Ships in production, unlike the tuning panel. ---- */
+
+.settings-button {
+  position: absolute;
+  right: 1.1rem;
+  bottom: 1.1rem;
+  /* The HUD root disables pointer events so the canvas stays clickable through it; anything
+     interactive has to opt back in. */
+  pointer-events: auto;
+  font: inherit;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: #cfe3f7;
+  background: rgb(8 14 22 / 55%);
+  border: 1px solid rgb(255 255 255 / 16%);
+  border-radius: 4px;
+  padding: 0.35rem 0.6rem;
+  cursor: pointer;
+  opacity: 0.5;
+  transition: opacity 120ms ease;
+}
+
+.settings-button:hover,
+.settings-button.active {
+  opacity: 1;
+}
+
+/* Shown and hidden with `display`, deliberately, with no transition.
+ *
+ * The first version faded in via opacity and visibility, and under software GL it did not
+ * appear at all: the transitions sat at `currentTime: 0` more than a second after the class
+ * changed, because CSS transitions advance on the document timeline and the timeline is
+ * starved when a frame takes hundreds of milliseconds. The panel was interactive and
+ * invisible.
+ *
+ * That is unacceptable here specifically. A player on a weak GPU is the most likely person to
+ * need comfort settings and the least likely to be able to see a faded-in panel, so this one
+ * element trades a nicety for being certain to appear. The transient HUD flashes keep their
+ * transitions -- a missed fade on a score popup costs nothing.
+ */
+.settings-panel {
+  position: absolute;
+  right: 1.1rem;
+  bottom: 3.4rem;
+  width: min(22rem, 80vw);
+  padding: 0.9rem 1rem;
+  pointer-events: auto;
+  background: rgb(6 10 16 / 92%);
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 6px;
+  font-size: 0.78rem;
+  display: none;
+}
+
+.settings-panel.visible {
+  display: block;
+}
+
+.settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  opacity: 0.7;
+  margin-bottom: 0.6rem;
+}
+
+.settings-close {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0 0.2rem;
+}
+
+.settings-row {
+  display: grid;
+  grid-template-columns: 1fr auto 2.6rem;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.28rem 0;
+  cursor: pointer;
+}
+
+.settings-row input[type='range'] {
+  width: 6.5rem;
+  accent-color: #7fd0ff;
+}
+
+.settings-row input[type='checkbox'] {
+  accent-color: #7fd0ff;
+  /* Spans the slider and readout columns, so the controls line up down the panel. */
+  grid-column: 2 / span 2;
+  justify-self: start;
+}
+
+.settings-row em {
+  font-style: normal;
+  text-align: right;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-group {
+  margin-top: 0.6rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid rgb(255 255 255 / 10%);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  opacity: 0.5;
+}
+
+.settings-note {
+  margin-top: 0.7rem;
+  font-size: 0.68rem;
+  line-height: 1.4;
+  opacity: 0.55;
+}
+
+/* ---- Dev-only tuning panel. Not present in production builds. ---- */
+
+.tuning-panel {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  width: 22rem;
+  max-height: calc(100vh - 1.5rem);
+  display: flex;
+  flex-direction: column;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  background: rgb(6 10 16 / 88%);
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 5px;
+  /* The HUD root disables pointer events so the canvas is clickable through it; the
+     panel has to opt back in or its sliders cannot be dragged. */
+  pointer-events: auto;
+}
+
+.tuning-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid rgb(255 255 255 / 8%);
+}
+
+.tuning-panel.collapsed .tuning-head {
+  border-bottom: none;
+}
+
+.tuning-actions {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.tuning-panel button {
+  font: inherit;
+  color: #cfe3f7;
+  background: rgb(255 255 255 / 8%);
+  border: none;
+  border-radius: 3px;
+  padding: 0.25rem 0.5rem;
+  cursor: pointer;
+}
+
+.tuning-panel button:hover {
+  background: rgb(255 255 255 / 16%);
+}
+
+.tuning-body {
+  overflow-y: auto;
+  padding: 0.35rem 0.5rem;
+}
+
+.tuning-panel.collapsed .tuning-body,
+.tuning-panel.collapsed .tuning-status {
+  display: none;
+}
+
+.tuning-row {
+  display: grid;
+  grid-template-columns: 9.5rem 1fr 4rem;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 1px 0;
+}
+
+.tuning-key {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.75;
+}
+
+.tuning-slider {
+  width: 100%;
+  accent-color: #7fd0ff;
+}
+
+.tuning-number {
+  font: inherit;
+  width: 100%;
+  color: #eaf3ff;
+  background: rgb(255 255 255 / 8%);
+  border: none;
+  border-radius: 3px;
+  padding: 0.15rem 0.25rem;
+}
+
+.tuning-status {
+  min-height: 1.2em;
+  padding: 0 0.5rem 0.4rem;
+  color: #7cf6b0;
+}

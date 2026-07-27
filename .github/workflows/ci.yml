@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A new push makes an in-flight run for the same ref pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: typecheck, lint, unit tests, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run format:check
+
+      # The bulk of the suite. Runs in Node with no GPU, which is the payoff of
+      # keeping the simulation pure -- board physics, the terrain sampler and the
+      # loop are all covered here in seconds.
+      - run: npm run test
+
+      - run: npm run build
+
+      - name: Check bundle size
+        # A tripwire, not a limit. The whole point of one runtime dependency is that
+        # this number stays small; if it grows, something was added that should be
+        # justified.
+        run: |
+          size=$(gzip -c dist/assets/*.js | wc -c)
+          echo "gzipped JS: $size bytes"
+          if [ "$size" -gt 2500000 ]; then
+            echo "::error::Bundle exceeded 2.5 MB gzipped ($size bytes)"
+            exit 1
+          fi
+
+  e2e:
+    name: browser tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Runners have no preinstalled browser; playwright.config.ts falls back to
+      # Playwright's own resolution when it cannot find one, so this is what
+      # populates it. Chromium only -- the suite asserts structure (draw calls,
+      # shader compilation, a non-blank framebuffer) under software GL, and none of
+      # that is engine-specific.
+      - run: npx playwright install --with-deps chromium
+
+      - run: npm run build
+
+      - run: npm run test:e2e
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-results
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 7
+          if-no-files-found: ignore

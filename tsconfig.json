@@ -1,0 +1,34 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    // lib ahead of target on purpose: `toSorted`/`toReversed` are runtime methods,
+    // not syntax, so the es2022 build target does not need to transpile them and
+    // every browser this game targets has shipped them.
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    // `node` is here for the config files and the test suite only. Nothing under
+    // src/sim, src/track, src/race or src/core may import a node: module --
+    // tests/unit/architecture.test.ts enforces that, since the type system will
+    // not.
+    "types": ["vite/client", "node"],
+
+    "strict": true,
+    "noImplicitOverride": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "exactOptionalPropertyTypes": true,
+    "noFallthroughCasesInSwitch": true,
+
+    // Deliberately OFF: every heightfield corner read is in the hottest loop in
+    // the game and would need a non-null assertion. The arrays are fixed-size,
+    // the index math is clamped in exactly one place, and that clamp is tested.
+    "noUncheckedIndexedAccess": false,
+
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["src", "tests", "*.config.ts"]
+}

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- Both declared so no browser falls back to requesting /favicon.ico, which
+         would 404 and show up as a console error in the boot test. -->
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./favicon.svg" />
+    <title>Whiteout</title>
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="stage"></canvas>
+      <div id="hud" aria-live="polite"></div>
+      <div id="boot">
+        <div class="boot-title">WHITEOUT</div>
+        <div class="boot-status" id="boot-status">loading</div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

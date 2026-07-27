@@ -1,0 +1,112 @@
+:root {
+  --ink: #0b0e13;
+  --paper: #eef4fb;
+  color-scheme: dark;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--ink);
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    Helvetica,
+    Arial,
+    sans-serif;
+  color: var(--paper);
+}
+
+/* Fixed full-viewport wrapper: stops rubber-band scrolling and pull-to-refresh.
+   Needed on touch platforms and harmless on desktop, so it goes in now. */
+#app {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
+
+#stage {
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* Kills the iOS double-tap-zoom gesture, which otherwise eats quick taps --
+     and quick taps are this game's entire jump mechanic. */
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+#hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  /* Respect notches and home indicators when this eventually runs standalone. */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
+}
+
+#boot {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 0.75rem;
+  text-align: center;
+  background: var(--ink);
+  transition: opacity 400ms ease;
+}
+
+#boot.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.boot-title {
+  font-size: clamp(2rem, 8vw, 4.5rem);
+  font-weight: 800;
+  letter-spacing: 0.28em;
+  text-indent: 0.28em;
+}
+
+.boot-status {
+  font-size: 0.8rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  opacity: 0.55;
+}
+
+.boot-status.error {
+  color: #ff8888;
+  opacity: 1;
+  max-width: 40rem;
+  margin: 0 auto;
+  letter-spacing: 0.05em;
+  text-transform: none;
+}
+
+/* Dev-only readout. Monospace so numbers do not jitter as they change width. */
+#debug {
+  position: absolute;
+  top: 0.75rem;
+  left: 0.75rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre;
+  padding: 0.5rem 0.7rem;
+  background: rgb(6 10 16 / 62%);
+  border-radius: 4px;
+  pointer-events: none;
+}

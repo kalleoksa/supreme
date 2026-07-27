@@ -1,0 +1,260 @@
+import type { Game, ScriptedInput } from '../app/Game.js';
+
+export interface RiderSnapshot {
+  x: number;
+  y: number;
+  z: number;
+  speed: number;
+  kmh: number;
+  yaw: number;
+  grounded: boolean;
+  airTime: number;
+  apexHeight: number;
+  edge: number;
+  skid: number;
+  vLong: number;
+  vLat: number;
+  simTime: number;
+}
+
+export interface RaceSnapshot {
+  /** 0 counting down, 1 running, 2 finished. */
+  state: number;
+  time: number;
+  countdown: number;
+  progress: number;
+  splits: number[];
+  finishTime: number;
+  oob: boolean;
+  oobDistance: number;
+  resets: number;
+  flaggedJumps: number;
+}
+
+/**
+ * Test surface exposed on `window.__GAME`.
+ *
+ * Playwright drives the real bundle through this rather than through synthetic
+ * screenshots, which is what lets the e2e suite assert structural facts -- draw
+ * call counts, shader compilation, sub-frame input edges -- on a machine with no
+ * GPU.
+ */
+export interface GameHarness {
+  ready: boolean;
+  error: string | null;
+  game: Game | null;
+  /** Draw calls and triangles from the most recent frame. */
+  renderInfo(): { calls: number; triangles: number } | null;
+  /** Advance exactly one frame, for deterministic input-edge assertions. */
+  frameStep(): void;
+  /**
+   * Place the camera explicitly, for capturing diagnostic views of a track.
+   *
+   * Worth having beyond tests: judging terrain from one fixed vantage is
+   * misleading, and the useful question is always "what does this look like from
+   * where the player will be".
+   */
+  setView(x: number, y: number, z: number, yaw: number, pitch?: number): void;
+  /** Height of the terrain surface plus an offset, for placing a view on the snow. */
+  viewFromSurface(x: number, z: number, above: number, yaw: number, pitch?: number): void;
+  /**
+   * Advance the simulation deterministically with scripted input, ignoring the wall
+   * clock. The real loop clamps at MAX_STEPS, so under software GL it degrades to
+   * slow motion and cannot drive the rider anywhere useful.
+   */
+  simulate(steps: number, script?: ScriptedInput): void;
+  /** Reset the rider to the start gate. */
+  respawn(): void;
+  /** Compact snapshot of the rider, for assertions and diagnostics. */
+  riderState(): RiderSnapshot | null;
+  /** Terrain height under (x, z) as the *sampler* sees it. */
+  sampleHeight(x: number, z: number): number | null;
+  /** Compact snapshot of the race, for asserting the run actually completes. */
+  raceState(): RaceSnapshot | null;
+  /**
+   * Size of the recorded ghost.
+   *
+   * Playback is M2, so what matters now is that the recorder ran at all and that the run
+   * costs what the format says it should. `game.ghost.serialize()` gives the buffer itself
+   * for inspecting a run that went somewhere it should not have.
+   */
+  ghostInfo(): { frames: number; bytes: number } | null;
+  /**
+   * Audio graph state and the live gain values.
+   *
+   * The mix cannot be judged from a test -- that is a listening job -- but the *wiring* can:
+   * that the context reaches `running` after a gesture, that wind rises with speed and hiss
+   * with skid, and that muting actually reaches the master gain.
+   */
+  audioState(): {
+    state: string;
+    running: boolean;
+    master: number;
+    wind: number;
+    hiss: number;
+    windCutoff: number;
+  } | null;
+  /** Terrain height under (x, z) as the *drawn mesh* sees it. */
+  raycastHeight(x: number, z: number): number | null;
+  /**
+   * Render one frame and sample the framebuffer in the same synchronous block,
+   * returning a coarse colour histogram.
+   *
+   * The synchronicity is the whole point. WebGL clears the drawing buffer once it
+   * is composited, so a `readPixels` from a later task sees all zeros -- which
+   * looks exactly like "the game rendered nothing". Setting
+   * `preserveDrawingBuffer` would fix that at a real cost to every frame players
+   * ever see, so instead the read happens before the browser gets a chance to
+   * composite.
+   */
+  framePixelStats(): { distinct: number; lit: number } | null;
+  /** Force a context loss, to verify the loss path. */
+  loseContext(): boolean;
+  /**
+   * Force a restore. A synthetic `loseContext()` never auto-restores -- a real GPU
+   * reset does -- so both halves have to be driven explicitly to test the path.
+   */
+  restoreContext(): boolean;
+}
+
+declare global {
+  interface Window {
+    __GAME?: GameHarness;
+  }
+}
+
+export function installHarness(): GameHarness {
+  // Cached deliberately: once the context is lost, getExtension() returns null,
+  // so re-fetching it would leave no way to ask for a restore.
+  let cachedLoseExt: WEBGL_lose_context | null = null;
+  const loseContextExtension = (): WEBGL_lose_context | null => {
+    if (cachedLoseExt) return cachedLoseExt;
+    const gl = harness.game?.renderer.renderer.getContext();
+    cachedLoseExt = gl?.getExtension('WEBGL_lose_context') ?? null;
+    return cachedLoseExt;
+  };
+
+  const harness: GameHarness = {
+    ready: false,
+    error: null,
+    game: null,
+    renderInfo() {
+      if (!harness.game) return null;
+      const info = harness.game.renderer.info;
+      return { calls: info.calls, triangles: info.triangles };
+    },
+    frameStep() {
+      harness.game?.frameStep();
+    },
+    setView(x, y, z, yaw, pitch) {
+      harness.game?.setView(x, y, z, yaw, pitch);
+    },
+    viewFromSurface(x, z, above, yaw, pitch) {
+      const game = harness.game;
+      if (!game) return;
+      game.setView(x, game.field.height(x, z) + above, z, yaw, pitch);
+    },
+    simulate(steps, script) {
+      harness.game?.simulate(steps, script);
+    },
+    respawn() {
+      harness.game?.respawn();
+    },
+    riderState() {
+      const game = harness.game;
+      if (!game) return null;
+      const b = game.board;
+      const speed = Math.hypot(b.vel.x, b.vel.z);
+      return {
+        x: b.pos.x,
+        y: b.pos.y,
+        z: b.pos.z,
+        speed,
+        kmh: speed * 3.6,
+        yaw: b.yaw,
+        grounded: b.grounded,
+        airTime: b.airTime,
+        apexHeight: b.apexHeight,
+        edge: b.edge,
+        skid: b.skid,
+        vLong: b.vLong,
+        vLat: b.vLat,
+        simTime: b.time,
+      };
+    },
+    sampleHeight(x, z) {
+      if (!harness.game) return null;
+      return harness.game.field.height(x, z);
+    },
+    ghostInfo() {
+      const ghost = harness.game?.ghost;
+      if (!ghost) return null;
+      return { frames: ghost.count, bytes: ghost.byteLength };
+    },
+    audioState() {
+      const audio = harness.game?.audio;
+      if (!audio) return null;
+      return { state: audio.contextState, running: audio.running, ...audio.levels() };
+    },
+    raceState() {
+      const race = harness.game?.race;
+      if (!race) return null;
+      return {
+        state: race.state,
+        time: race.time,
+        countdown: race.countdown,
+        progress: race.progress,
+        splits: race.splitTimes.slice(),
+        finishTime: race.finishTime,
+        oob: race.oob,
+        oobDistance: race.oobDistance,
+        resets: race.resets,
+        flaggedJumps: race.flaggedJumps,
+      };
+    },
+    raycastHeight(x, z) {
+      if (!harness.game) return null;
+      return harness.game.raycastTerrain(x, z);
+    },
+    framePixelStats() {
+      const game = harness.game;
+      if (!game) return null;
+      const gl = game.renderer.renderer.getContext();
+
+      game.frameStep();
+
+      const w = gl.drawingBufferWidth;
+      const h = gl.drawingBufferHeight;
+      const px = new Uint8Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+
+      const buckets = new Set<number>();
+      let lit = 0;
+      // Stride over a prime number of pixels: a cheap way to sample the whole
+      // frame without walking millions of bytes or aligning with any pattern in it.
+      for (let i = 0; i < px.length; i += 4 * 97) {
+        const r = px[i] >> 4;
+        const g = px[i + 1] >> 4;
+        const b = px[i + 2] >> 4;
+        buckets.add((r << 8) | (g << 4) | b);
+        if (px[i] + px[i + 1] + px[i + 2] > 60) lit++;
+      }
+      return { distinct: buckets.size, lit };
+    },
+    loseContext() {
+      const ext = loseContextExtension();
+      if (!ext) return false;
+      ext.loseContext();
+      return true;
+    },
+    restoreContext() {
+      const ext = loseContextExtension();
+      if (!ext) return false;
+      ext.restoreContext();
+      return true;
+    },
+  };
+
+  window.__GAME = harness;
+  return harness;
+}
