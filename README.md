@@ -144,6 +144,24 @@ pass. A speed advantage decays back toward terminal velocity, so the pump's valu
 transient — it compounds across linked turns rather than showing up after a long
 runout.
 
+### Landings name their failure
+
+The loudest historical complaint about the game this descends from was that its trick
+system was illegible — "far too easy to get it wrong". The deeper problem was not
+difficulty: a failure told you nothing. You lost your points with no idea which of four
+things you had done wrong.
+
+So the grader knows _why_ and says so. `UNDER-ROTATED` and `SIDEWAYS` are opposite
+corrections, and being told which one you made is the difference between improving and
+guessing. Every reason the grader can produce has display text, and a test asserts that —
+a reason the HUD cannot name is worse than useless.
+
+The grade is a weighted sum of flatness, alignment and rotation, then **multiplied by its
+worst component**. A pure sum was too forgiving: a landing completely sideways at 22 km/h
+still scored 0.65 and graded Clean, because the other two components masked it. You
+cannot land clean while pointing 90° off your direction of travel, however good the rest
+of it was.
+
 ### Keyboard input had never worked
 
 Worth recording as a process lesson. `InputRouter.poll()` was never called anywhere, so
@@ -181,7 +199,7 @@ and tricks, a timer and a finish line.
 - [x] Phase 2 — input, first ride: it plays, at ~87 km/h
 - [x] Phase 3 — carve model: a cost, a reward, and a way to notice it
 - [x] Phase 4 — charged ollie: the mechanic this was all built around
-- [ ] Phase 5 — tricks and landing
+- [x] Phase 5 — tricks and landing, with named failure reasons
 - [ ] Phase 6 — the authored track
 - [ ] Phase 7 — ghost recording
 - [ ] Phase 8 — audio, comfort settings, feel pass

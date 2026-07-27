@@ -5,6 +5,8 @@ import { TrickState, type BoardState } from './BoardState.js';
 import type { BoardTuning } from './boardTuning.js';
 import { EventBuffer, SimEventKind } from './events.js';
 import { resolveOllie } from './Ollie.js';
+import { stepTrick } from './Trick.js';
+import { impactSpeedInto, resolveLanding } from './Landing.js';
 import type { TerrainSampler } from './Terrain.js';
 
 const GRAVITY = 9.81;
@@ -93,6 +95,13 @@ export function stepBoard(
   // second test the board re-grounds on the very tick it pops, eating the jump.
   const grounded = state.clearance <= t.SNAP_TOL && intoSurface <= 0.5;
 
+  // Grade the landing on the airborne -> grounded transition, and do it *before* the
+  // snap below removes the into-surface velocity -- that impact is one of the things
+  // being graded, so once the snap has run the evidence is gone.
+  if (grounded && !state.grounded && state.airTime > 0.05) {
+    resolveLanding(state, t, ctx.events, impactSpeedInto(state));
+  }
+
   if (grounded) {
     // Hard snap, not a spring.
     //
@@ -178,6 +187,9 @@ export function stepBoard(
     state.grounded = false;
     state.clearance = Math.max(state.clearance, t.SNAP_TOL + 1e-3);
   }
+
+  // ---------------------------------------------------- 4c. Tricks
+  stepTrick(state, input, dt, t, ctx.events);
 
   const tucking = Math.max(0, input.steerY);
   const braking = Math.max(0, -input.steerY);

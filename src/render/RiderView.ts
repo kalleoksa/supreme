@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { clamp, lerp, smoothTowards } from '../core/math.js';
 import type { BoardState } from '../sim/BoardState.js';
+import { isRotational, TrickId } from '../sim/Trick.js';
 import { LIGHTING_GLSL, type Environment } from './Environment.js';
 
 /**
@@ -147,6 +148,25 @@ export class RiderView {
     // Order matters: yaw, then pitch along the board, then roll across it.
     this.group.rotation.set(0, 0, 0);
     this.group.rotateY(-state.yaw);
+
+    // Trick rotation, on top of the riding pose.
+    //
+    // Applied to the rider and board only -- the chase camera never inherits it. That is
+    // the primary anti-nausea rule, and also a legibility one: a rotation readout is
+    // unreadable on a spinning screen, and the whole point of the trick HUD is that it
+    // stays readable while the board does not.
+    if (state.trickRot !== 0) {
+      if (isRotational(state.trickId)) {
+        if (state.trickId === TrickId.Backflip) {
+          // A backflip turns about the axis across the board's length.
+          this.group.rotateZ(state.trickRot);
+        } else {
+          // Spins turn about the board's up axis.
+          this.group.rotateY(state.trickRot);
+        }
+      }
+    }
+
     this.group.rotateZ(this.visualPitch);
     this.group.rotateX(this.visualRoll + this.visualLean);
 

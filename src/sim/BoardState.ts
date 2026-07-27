@@ -97,6 +97,10 @@ export interface BoardState {
   trickRot: number;
   trickId: number;
   trickBroken: boolean;
+  /** Seconds a hold-scored trick (a grab) has been held. */
+  trickHoldTime: number;
+  /** Countdown for the mid-air break window, during which the board rights itself. */
+  breakTimer: number;
 
   launchSpeed: number;
   launchNormal: Vec3;
@@ -140,6 +144,8 @@ export function createBoardState(): BoardState {
     trickRot: 0,
     trickId: 0,
     trickBroken: false,
+    trickHoldTime: 0,
+    breakTimer: 0,
     launchSpeed: 0,
     launchNormal: v3(0, 1, 0),
     score: 0,
@@ -185,6 +191,8 @@ export function copyBoardState(out: BoardState, src: BoardState): BoardState {
   out.trickRot = src.trickRot;
   out.trickId = src.trickId;
   out.trickBroken = src.trickBroken;
+  out.trickHoldTime = src.trickHoldTime;
+  out.breakTimer = src.breakTimer;
   out.launchSpeed = src.launchSpeed;
   out.launchNormal.x = src.launchNormal.x;
   out.launchNormal.y = src.launchNormal.y;
@@ -299,6 +307,9 @@ export function resetBoardState(
   state.jumpCharge = 0;
   state.trickRot = 0;
   state.trickBroken = false;
+  state.trickHoldTime = 0;
+  state.breakTimer = 0;
+  state.comboCount = 0;
   state.crashTimer = 0;
   state.lastFailReason = FailReason.None;
   state.ground.surface = SurfaceId.Groomed;

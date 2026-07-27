@@ -1,5 +1,7 @@
-import type { BoardState } from '../sim/BoardState.js';
+import { FailReason, LandQuality, TrickState, type BoardState } from '../sim/BoardState.js';
 import { SimEventKind, type EventBuffer } from '../sim/events.js';
+import { FAIL_REASON_TEXT, LAND_QUALITY_TEXT } from '../sim/Landing.js';
+import { completedHalfSpins, isRotational, TRICK_NAMES } from '../sim/Trick.js';
 
 /**
  * The riding HUD.
@@ -25,6 +27,11 @@ export class Hud {
   private readonly ttgFill: HTMLElement;
   private readonly chargeEl: HTMLElement;
   private readonly chargeFill: HTMLElement;
+  private readonly ribbonEl: HTMLElement;
+  private readonly bannerEl: HTMLElement;
+  private readonly bannerTitle: HTMLElement;
+  private readonly bannerReason: HTMLElement;
+  private readonly scoreEl: HTMLElement;
 
   private lastSpeed = '';
   private lastTime = '';
@@ -33,6 +40,10 @@ export class Hud {
   private lastPop = '';
   private lastTtg = -1;
   private lastCharge = -1;
+  private lastRibbon = '';
+  private lastScore = '';
+  private bannerTimer = 0;
+  private bannerFrames = 0;
   private pumpTimer = 0;
   private pumpFrames = 0;
   private popTimer = 0;
@@ -61,6 +72,9 @@ export class Hud {
       <div class="hud-pop"></div>
       <div class="hud-ttg"><div class="hud-ttg-fill"></div></div>
       <div class="hud-charge"><div class="hud-charge-fill"></div></div>
+      <div class="hud-ribbon"></div>
+      <div class="hud-banner"><div class="hud-banner-title"></div><div class="hud-banner-reason"></div></div>
+      <div class="hud-score">0</div>
       <div class="hud-edge"><div class="hud-edge-fill"></div></div>
     `;
     parent.appendChild(this.root);
@@ -75,6 +89,11 @@ export class Hud {
     this.ttgFill = this.root.querySelector('.hud-ttg-fill') as HTMLElement;
     this.chargeEl = this.root.querySelector('.hud-charge') as HTMLElement;
     this.chargeFill = this.root.querySelector('.hud-charge-fill') as HTMLElement;
+    this.ribbonEl = this.root.querySelector('.hud-ribbon') as HTMLElement;
+    this.bannerEl = this.root.querySelector('.hud-banner') as HTMLElement;
+    this.bannerTitle = this.root.querySelector('.hud-banner-title') as HTMLElement;
+    this.bannerReason = this.root.querySelector('.hud-banner-reason') as HTMLElement;
+    this.scoreEl = this.root.querySelector('.hud-score') as HTMLElement;
   }
 
   /**
@@ -94,6 +113,25 @@ export class Hud {
   }
 
   /**
+   * The trick currently being performed, named the way a snowboarder would name it.
+   *
+   * Rotations are reported in degrees of *completed* half-revolution, so the number on
+   * screen is what the player has actually banked -- not what they are attempting. That
+   * distinction is what makes the readout trustworthy enough to make a decision from.
+   */
+  private static describeTrick(state: BoardState): string {
+    if (state.trickState === TrickState.Breaking) return 'BREAK';
+    if (state.trickState !== TrickState.Tricking) return '';
+
+    const name = TRICK_NAMES[state.trickId] ?? '';
+    if (!isRotational(state.trickId)) {
+      return state.trickHoldTime > 0.15 ? `${name} ${state.trickHoldTime.toFixed(1)}s` : name;
+    }
+    const halves = completedHalfSpins(state);
+    return halves > 0 ? `${name} ${halves * 180}` : name;
+  }
+
+  /**
    * Drain simulation events. Called before `update`, once per frame.
    *
    * The pump flash is the entire teaching mechanism for the carve reward. Nothing
@@ -107,6 +145,39 @@ export class Hud {
       if (e.kind === SimEventKind.PumpBoost) {
         this.pumpTimer = Hud.FLASH_TIME;
         this.pumpFrames = Hud.FLASH_MIN_FRAMES;
+      } else if (e.kind === SimEventKind.Land) {
+        // The landing banner, and the whole reason this phase exists. Naming the failure
+        // is what separates a system a player can learn from one that feels arbitrary:
+        // UNDER-ROTATED and SIDEWAYS are opposite corrections, and being told which one
+        // you made is the difference between improving and guessing.
+        const quality = e.a as LandQuality;
+        const reason = e.b as FailReason;
+        const points = e.c;
+
+        this.bannerTitle.textContent = LAND_QUALITY_TEXT[quality] ?? '';
+        // Points only when there were any: "+0" on every plain landing is noise.
+        const suffix = points > 0 ? `  +${points}` : points < 0 ? `  ${points}` : '';
+        if (suffix) this.bannerTitle.textContent += suffix;
+
+        // A reason is only shown when something actually went wrong. A clean landing
+        // needs no explanation, and captioning it would train players to ignore the line.
+        this.bannerReason.textContent =
+          quality <= LandQuality.Sketchy ? (FAIL_REASON_TEXT[reason] ?? '') : '';
+
+        this.bannerEl.classList.toggle('crash', quality === LandQuality.Crash);
+        this.bannerEl.classList.toggle('perfect', quality === LandQuality.Perfect);
+        this.bannerTimer = Hud.FLASH_TIME * 2.4;
+        this.bannerFrames = Hud.FLASH_MIN_FRAMES;
+      } else if (e.kind === SimEventKind.TrickBreak) {
+        // Showing the forfeited number is what teaches the risk/reward. A silent bail
+        // just looks like the trick stopped working.
+        const forfeited = Math.round(e.a);
+        this.bannerTitle.textContent = 'BREAK';
+        this.bannerReason.textContent =
+          forfeited > 0 ? `landing saved · ${forfeited} forfeited` : 'landing saved';
+        this.bannerEl.classList.remove('crash', 'perfect');
+        this.bannerTimer = Hud.FLASH_TIME * 1.6;
+        this.bannerFrames = Hud.FLASH_MIN_FRAMES;
       } else if (e.kind === SimEventKind.Pop && e.a > 0) {
         const label = Hud.describePop(e.b, e.c);
         if (label !== this.lastPop) {
@@ -186,6 +257,32 @@ export class Hud {
     }
     // Full charge is worth signalling: past it, holding longer buys nothing.
     this.chargeFill.classList.toggle('full', state.jumpCharge >= 0.999);
+
+    // The trick ribbon: the name assembling live as the player inputs it.
+    //
+    // Showing what is *currently* being performed, mid-air, is the other half of the
+    // legibility fix. The original's trick system was called illegible largely because
+    // you could not tell what you had asked for until you had already landed it.
+    const ribbon = Hud.describeTrick(state);
+    if (ribbon !== this.lastRibbon) {
+      this.ribbonEl.textContent = ribbon;
+      this.lastRibbon = ribbon;
+    }
+    this.ribbonEl.classList.toggle('visible', ribbon !== '');
+
+    if (this.bannerTimer > 0 || this.bannerFrames > 0) {
+      this.bannerTimer = Math.max(0, this.bannerTimer - dt);
+      this.bannerFrames = Math.max(0, this.bannerFrames - 1);
+      this.bannerEl.classList.add('visible');
+    } else {
+      this.bannerEl.classList.remove('visible');
+    }
+
+    const score = state.score > 0 ? state.score.toLocaleString('en-US') : '';
+    if (score !== this.lastScore) {
+      this.scoreEl.textContent = score;
+      this.lastScore = score;
+    }
 
     // Air time, shown only in the air, so it reads as an event rather than clutter.
     const air = state.grounded ? '' : `AIR ${state.airTime.toFixed(1)}s`;

@@ -56,8 +56,13 @@ export interface ScriptedInput {
    * the unit tests could ever exercise it.
    */
   carveReleased?: boolean;
-  /** Fire a jump press edge on the first step, to begin charging. */
+  /** Fire a jump press edge on the first step, to begin charging (or break a trick). */
   jumpPressed?: boolean;
+  /** Fire a trick press edge on the first step, starting a trick. */
+  trickPressed?: boolean;
+  /** Latched trick direction, which selects which trick starts. */
+  trickDirX?: -1 | 0 | 1;
+  trickDirY?: -1 | 0 | 1;
   /** Fire a jump release edge on the first step: the pop. */
   jumpReleased?: boolean;
 }
@@ -255,7 +260,13 @@ export class Game implements LoopHandlers {
     // presentation, and a 30 fps display must not miss one that happened on an
     // intermediate substep.
     this.stepCtx.events.forEach((e) => {
-      if (e.kind === SimEventKind.Pop && e.a > 0) {
+      if (e.kind === SimEventKind.Crash) {
+        // Shake only on a crash. Anywhere else it costs readability for nothing.
+        this.chase.shake();
+      } else if (e.kind === SimEventKind.Land && e.a >= 2) {
+        // A clean or perfect landing gets the same FOV punch a pop does.
+        this.chase.kick();
+      } else if (e.kind === SimEventKind.Pop && e.a > 0) {
         // A pop or a landing punches the field of view briefly. Cheaper than a camera
         // move and it does not disturb the framing the player is reading.
         this.chase.kick();
@@ -346,9 +357,14 @@ export class Game implements LoopHandlers {
     input.jump.held = script.jump ?? false;
     input.trick.held = script.trick ?? false;
     input.carve.pressed = false;
-    input.trick.pressed = false;
-    input.jump.pressed = script.jumpPressed ?? false;
     input.trick.released = false;
+    // Press edges fire once, on the first step only.
+    input.jump.pressed = script.jumpPressed ?? false;
+    input.trick.pressed = script.trickPressed ?? false;
+    // The router latches these when the modifier engages; scripted runs set them
+    // directly, and they must persist so the trick keeps its identity.
+    input.trickDirX = script.trickDirX ?? 0;
+    input.trickDirY = script.trickDirY ?? 0;
     // Release edges fire once, on the first step only -- an edge that persisted across
     // every step would pay the pump out repeatedly.
     input.carve.released = script.carveReleased ?? false;
@@ -364,6 +380,7 @@ export class Game implements LoopHandlers {
       input.carve.released = false;
       input.jump.released = false;
       input.jump.pressed = false;
+      input.trick.pressed = false;
       if (!this.field.contains(this.board.pos.x, this.board.pos.z)) {
         this.respawn();
         break;

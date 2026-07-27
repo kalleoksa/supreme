@@ -199,6 +199,79 @@
   background: #ffd24a;
 }
 
+/* Trick ribbon: what is being performed, right now, mid-air. */
+.hud-ribbon {
+  position: absolute;
+  left: 50%;
+  bottom: 8.6rem;
+  transform: translateX(-50%);
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: #ffe9a8;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 100ms ease;
+}
+
+.hud-ribbon.visible {
+  opacity: 1;
+}
+
+/* Landing banner. The reason line is the point of it: a quality word alone tells the
+   player they failed, not what to change. */
+.hud-banner {
+  position: absolute;
+  left: 50%;
+  top: 44%;
+  transform: translate(-50%, 0.5rem);
+  text-align: center;
+  opacity: 0;
+  transition:
+    opacity 110ms ease,
+    transform 220ms ease;
+}
+
+.hud-banner.visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.hud-banner-title {
+  font-size: clamp(1.3rem, 3vw, 2rem);
+  font-weight: 800;
+  letter-spacing: 0.14em;
+}
+
+.hud-banner-reason {
+  margin-top: 0.2rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  opacity: 0.9;
+}
+
+.hud-banner.perfect .hud-banner-title {
+  color: #7cf6b0;
+}
+
+.hud-banner.crash .hud-banner-title {
+  color: #ff7a6b;
+}
+
+.hud-banner.crash .hud-banner-reason {
+  color: #ffb0a6;
+}
+
+.hud-score {
+  position: absolute;
+  top: 1.6rem;
+  right: 1.4rem;
+  font-size: clamp(1.1rem, 2.4vw, 1.6rem);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
 /* ---- Dev-only tuning panel. Not present in production builds. ---- */
 
 .tuning-panel {
