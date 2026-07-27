@@ -3,7 +3,7 @@ import { WORLD_UP, cross3, dot3, normalize3, projectOntoPlane3, v3 } from '../co
 import type { InputState } from '../input/InputState.js';
 import { TrickState, type BoardState } from './BoardState.js';
 import type { BoardTuning } from './boardTuning.js';
-import { EventBuffer } from './events.js';
+import { EventBuffer, SimEventKind } from './events.js';
 import type { TerrainSampler } from './Terrain.js';
 
 const GRAVITY = 9.81;
@@ -149,8 +149,15 @@ export function stepBoard(
 
   // ------------------------------------------------------- 4. Edge engagement
   const carveStrength = input.carve.held ? clamp01(ctx.carveAnalog) : 0;
+
+  // The pump must be resolved BEFORE the hold timer is touched. By the tick the
+  // release edge arrives, `carve.held` is already false, so updating the timer first
+  // would zero the very duration the reward is scaled by and the pump would never
+  // fire. Subtle, and silent if you get it wrong.
+  const pumped = state.grounded ? resolvePump(state, input, ctx, dt) : 0;
+
   // Smoothed rather than binary: an instant full edge feels like a switch, and the
-  // pump-on-release reward needs a continuous quantity to scale by.
+  // pump reward needs a continuous quantity to scale by.
   const edgeTarget = carveStrength * (input.steerX === 0 ? 1 : Math.sign(input.steerX));
   state.edge += (edgeTarget - state.edge) * (1 - expDecay(t.EDGE_RATE, dt));
   if (carveStrength > 0) state.edgeHoldTime += dt;
@@ -197,7 +204,7 @@ export function stepBoard(
   }
 
   if (state.grounded) {
-    stepGrounded(state, input, ctx, dt, tucking, braking, carveStrength);
+    stepGrounded(state, ctx, dt, tucking, braking, carveStrength, pumped);
   } else {
     stepAirborne(state, ctx, dt);
   }
@@ -228,14 +235,59 @@ export function stepBoard(
   state.tailY = terrain.height(state.pos.x - nfx * t.TAIL_LEN, state.pos.z - nfz * t.TAIL_LEN);
 }
 
-function stepGrounded(
+/**
+ * The pump: the reward half of the carve model.
+ *
+ * Releasing a committed edge while the board is coming out onto the fall line pays
+ * back speed. This is the whole expressive ceiling of a one-button mechanic --
+ * sloppy carving bleeds speed, while edge-then-release-into-the-fall-line
+ * accelerates, and the difference is entirely in *when* the player lets go.
+ *
+ * Two conditions, both legible enough to learn without being told:
+ *
+ *  - the edge was held past `PUMP_MIN_HOLD`, so a flick earns nothing; and
+ *  - the board exits pointing downhill, so a release mid-traverse earns nothing.
+ *
+ * Returns the speed to add along `forward`, in m/s.
+ */
+function resolvePump(
   state: BoardState,
   input: InputState,
+  ctx: BoardStepContext,
+  dt: number,
+): number {
+  const t = ctx.tuning;
+  if (!input.carve.released) return 0;
+  if (state.edgeHoldTime < t.PUMP_MIN_HOLD) return 0;
+
+  // The horizontal part of the surface normal already points downhill, so the
+  // alignment test costs nothing extra -- no second terrain query.
+  const downhillLen = Math.hypot(state.ground.nx, state.ground.nz);
+  if (downhillLen < 1e-4) return 0; // dead flat: no fall line to exit onto
+  const dx = state.ground.nx / downhillLen;
+  const dz = state.ground.nz / downhillLen;
+
+  const alignment = clamp01(Math.cos(state.yaw) * dx + Math.sin(state.yaw) * dz);
+  if (alignment < t.PUMP_MIN_ALIGN) return 0;
+
+  // Hold longer for more, but saturating: a four-second traverse should not bank a
+  // bigger payout than a committed two-second turn.
+  const holdFactor = clamp01((state.edgeHoldTime - t.PUMP_MIN_HOLD) / t.PUMP_MIN_HOLD);
+  const boost = t.PUMP_BOOST * (0.35 + 0.65 * holdFactor) * alignment;
+
+  ctx.events.push(SimEventKind.PumpBoost, state.tick, boost, alignment, state.edgeHoldTime);
+  void dt;
+  return boost;
+}
+
+function stepGrounded(
+  state: BoardState,
   ctx: BoardStepContext,
   dt: number,
   tucking: number,
   braking: number,
   carveStrength: number,
+  pumped: number,
 ): void {
   const t = ctx.tuning;
   const ground = state.ground;
@@ -257,6 +309,24 @@ function stepGrounded(
   const lat = lerp(t.BASE_LAT_FRICTION, t.CARVE_LAT_FRICTION, carveStrength);
   vLat *= expDecay(lat * ground.grip, dt);
   state.skid = clamp01(Math.abs(vLat) / t.SKID_REF);
+
+  // --- Carve drag: the cost half of the carve model.
+  //
+  // Scaled by turn rate, not by edge engagement alone. The distinction is the whole
+  // point. Charging a fixed cost for having the edge down makes carving strictly
+  // worse than not carving -- measured, a one-second full carve at 87 km/h already
+  // loses 87 to 70 km/h from lateral scrubbing, and a flat 0.9/s decay on top drops
+  // the exit to about 28. Scaling by how hard the board is actually *turning* gives
+  // the right shape instead: an edge set and running nearly straight is cheap, a
+  // violent direction change is expensive.
+  //
+  // That relationship is what makes a good line faster than a brutal one, which is
+  // the skill the whole mechanic exists to reward.
+  const edgeWork = state.edge * state.edge * Math.abs(state.yawRate);
+  vLong = decelerate(vLong, t.CARVE_DRAG * edgeWork * dt);
+
+  // --- The pump pays back speed for releasing a committed edge onto the fall line.
+  if (pumped > 0) vLong += pumped;
 
   // --- Aero drag, sign-aware so it can never accelerate a reversing board.
   const dragMul = lerp(1, t.TUCK_DRAG_MUL, tucking);
@@ -286,8 +356,6 @@ function stepGrounded(
   state.vel.x = fwd.x * vLong + rgt.x * vLat;
   state.vel.y = fwd.y * vLong + rgt.y * vLat;
   state.vel.z = fwd.z * vLong + rgt.z * vLat;
-
-  void input;
 }
 
 function stepAirborne(state: BoardState, ctx: BoardStepContext, dt: number): void {

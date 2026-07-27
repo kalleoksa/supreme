@@ -80,3 +80,129 @@
 .hud-edge-fill.skidding {
   background: #ffb457;
 }
+
+/* The pump flash. Deliberately the loudest thing the edge meter ever does: it is the
+   only signal that releasing a committed edge onto the fall line paid speed back,
+   and a player has to notice it to ever learn the mechanic. */
+.hud-edge-fill.pumped {
+  background: #7cf6b0;
+  box-shadow: 0 0 12px 2px rgb(124 246 176 / 70%);
+}
+
+.hud-pump {
+  position: absolute;
+  left: 50%;
+  bottom: 5.6rem;
+  transform: translate(-50%, 0.4rem);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  color: #7cf6b0;
+  opacity: 0;
+  transition:
+    opacity 140ms ease,
+    transform 140ms ease;
+}
+
+.hud-pump.visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+/* ---- Dev-only tuning panel. Not present in production builds. ---- */
+
+.tuning-panel {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  width: 22rem;
+  max-height: calc(100vh - 1.5rem);
+  display: flex;
+  flex-direction: column;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  background: rgb(6 10 16 / 88%);
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 5px;
+  /* The HUD root disables pointer events so the canvas is clickable through it; the
+     panel has to opt back in or its sliders cannot be dragged. */
+  pointer-events: auto;
+}
+
+.tuning-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid rgb(255 255 255 / 8%);
+}
+
+.tuning-panel.collapsed .tuning-head {
+  border-bottom: none;
+}
+
+.tuning-actions {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.tuning-panel button {
+  font: inherit;
+  color: #cfe3f7;
+  background: rgb(255 255 255 / 8%);
+  border: none;
+  border-radius: 3px;
+  padding: 0.25rem 0.5rem;
+  cursor: pointer;
+}
+
+.tuning-panel button:hover {
+  background: rgb(255 255 255 / 16%);
+}
+
+.tuning-body {
+  overflow-y: auto;
+  padding: 0.35rem 0.5rem;
+}
+
+.tuning-panel.collapsed .tuning-body,
+.tuning-panel.collapsed .tuning-status {
+  display: none;
+}
+
+.tuning-row {
+  display: grid;
+  grid-template-columns: 9.5rem 1fr 4rem;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 1px 0;
+}
+
+.tuning-key {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.75;
+}
+
+.tuning-slider {
+  width: 100%;
+  accent-color: #7fd0ff;
+}
+
+.tuning-number {
+  font: inherit;
+  width: 100%;
+  color: #eaf3ff;
+  background: rgb(255 255 255 / 8%);
+  border: none;
+  border-radius: 3px;
+  padding: 0.15rem 0.25rem;
+}
+
+.tuning-status {
+  min-height: 1.2em;
+  padding: 0 0.5rem 0.4rem;
+  color: #7cf6b0;
+}

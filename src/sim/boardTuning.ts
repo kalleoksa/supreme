@@ -37,6 +37,7 @@ export interface BoardTuning {
   CARVE_DRAG: number;
   EDGE_RATE: number;
   PUMP_MIN_HOLD: number;
+  PUMP_MIN_ALIGN: number;
   PUMP_BOOST: number;
 
   // --- Longitudinal
@@ -150,6 +151,18 @@ export const DEFAULT_TUNING: BoardTuning = {
   CARVE_DRAG: 0.9,
   EDGE_RATE: 9.0,
   PUMP_MIN_HOLD: 0.35,
+  /**
+   * How closely the exit must point down the fall line to earn the pump, as a dot
+   * product. 0.35 is roughly 70 degrees.
+   *
+   * A threshold rather than "any positive alignment" for two reasons. The obvious
+   * one: a rider coming out almost sideways should not be told they nailed it, and
+   * without a floor they were -- releasing at exactly 90 degrees still paid out,
+   * because `sin(PI)` is 1.2e-16 rather than 0. The better one: a crisp threshold is
+   * a *learnable* rule. "Come out pointing down the hill" is something a player can
+   * internalise; "more alignment is proportionally more boost, asymptotically" is not.
+   */
+  PUMP_MIN_ALIGN: 0.35,
   PUMP_BOOST: 2.5,
 
   DRAG_QUAD: 0.0022,

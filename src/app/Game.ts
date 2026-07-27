@@ -12,12 +12,24 @@ export interface ScriptedInput {
   jump?: boolean;
   trick?: boolean;
   carveAnalog?: number;
+  /**
+   * Fire a carve *release* edge on the first simulated step.
+   *
+   * Held state alone cannot express this, and without it the pump -- the entire
+   * reward half of the carve model -- is unreachable from a scripted run, so nothing
+   * outside the unit tests could ever exercise it.
+   */
+  carveReleased?: boolean;
+  /** Fire a jump release edge on the first step: the pop, once Phase 4 lands. */
+  jumpReleased?: boolean;
 }
 import { Renderer } from '../render/Renderer.js';
 import { Environment } from '../render/Environment.js';
 import { TerrainMesh } from '../render/TerrainMesh.js';
 import { RiderView } from '../render/RiderView.js';
 import { ChaseCamera } from '../render/ChaseCamera.js';
+import { Spray } from '../render/Spray.js';
+import type { DebugPanel } from '../hud/DebugPanel.js';
 import { FlyCamera } from '../dev/FlyCamera.js';
 import { buildTestSlope, type TestSlope } from '../track/testSlope.js';
 import type { Heightfield } from '../sim/Heightfield.js';
@@ -72,8 +84,10 @@ export class Game implements LoopHandlers {
   private readonly gamepad: GamepadSource;
   private readonly riderView: RiderView;
   private readonly chase: ChaseCamera;
+  private readonly spray: Spray;
   private readonly hud: Hud;
   private readonly flyCamera: FlyCamera;
+  private tuningPanel: DebugPanel | undefined;
 
   private readonly debugEl: HTMLElement | undefined;
   private lastDebugText = '';
@@ -120,6 +134,9 @@ export class Game implements LoopHandlers {
     this.chase = new ChaseCamera(this.renderer.camera, this.field);
     this.respawn();
 
+    this.spray = new Spray(this.environment);
+    this.renderer.scene.add(this.spray.points);
+
     this.hud = new Hud(options.hud);
 
     this.flyCamera = new FlyCamera(this.renderer.camera, options.canvas);
@@ -131,6 +148,16 @@ export class Game implements LoopHandlers {
       options.hud.appendChild(el);
       this.debugEl = el;
       window.addEventListener('keydown', this.onDebugKey);
+
+      // `import.meta.env.DEV` is tested directly here, not just via options.debug.
+      // Vite substitutes it literally, so Rollup can see `false && ...` and drop the
+      // import entirely; routing the same information through an object property
+      // leaves the chunk in the output, emitted but never fetched.
+      if (import.meta.env.DEV) {
+        void import('../hud/DebugPanel.js').then(({ DebugPanel }) => {
+          this.tuningPanel = new DebugPanel(options.hud, this.tuning);
+        });
+      }
     }
 
     this.loop = new Loop(new RealClock(), this);
@@ -201,11 +228,16 @@ export class Game implements LoopHandlers {
     this.viewBoard.yaw = lerpAngle(this.prevBoard.yaw, this.board.yaw, alpha);
 
     this.riderView.update(this.viewBoard, frameDt);
+    this.spray.update(this.viewBoard, frameDt);
 
     if (this.flyCamera.enabled) this.flyCamera.update(frameDt);
     else this.chase.update(this.viewBoard, frameDt);
 
-    this.hud.update(this.viewBoard);
+    // Drain before clearing: events are the only channel from the simulation to
+    // presentation, and a 30 fps display must not miss one that happened on an
+    // intermediate substep.
+    this.hud.drain(this.stepCtx.events);
+    this.hud.update(this.viewBoard, frameDt);
     this.stepCtx.events.clear();
 
     const cam = this.renderer.camera.position;
@@ -281,17 +313,23 @@ export class Game implements LoopHandlers {
     input.jump.held = script.jump ?? false;
     input.trick.held = script.trick ?? false;
     input.carve.pressed = false;
-    input.carve.released = false;
     input.jump.pressed = false;
-    input.jump.released = false;
     input.trick.pressed = false;
     input.trick.released = false;
+    // Release edges fire once, on the first step only -- an edge that persisted across
+    // every step would pay the pump out repeatedly.
+    input.carve.released = script.carveReleased ?? false;
+    input.jump.released = script.jumpReleased ?? false;
 
     this.stepCtx.carveAnalog = script.carveAnalog ?? 1;
 
     for (let i = 0; i < steps; i++) {
       copyBoardState(this.prevBoard, this.board);
       stepBoard(this.board, input, this.field, FIXED_DT, this.stepCtx);
+      // Consume the release edges after the first step, matching how the real input
+      // router delivers exactly one edge per physical release.
+      input.carve.released = false;
+      input.jump.released = false;
       if (!this.field.contains(this.board.pos.x, this.board.pos.z)) {
         this.respawn();
         break;
@@ -310,7 +348,9 @@ export class Game implements LoopHandlers {
     window.removeEventListener('keydown', this.onDebugKey);
     this.input.dispose();
     this.flyCamera.dispose();
+    this.tuningPanel?.dispose();
     this.hud.dispose();
+    this.spray.dispose();
     this.riderView.dispose();
     this.terrain.dispose();
     this.renderer.dispose();

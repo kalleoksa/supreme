@@ -201,15 +201,36 @@ describe('the test slope', () => {
   });
 
   it('produces finite heights and unit normals everywhere', () => {
-    for (const h of field.heights) expect(Number.isFinite(h)).toBe(true);
+    // Scan with a plain loop and assert once, rather than calling expect() per
+    // element. There are 481,601 posts, and an assertion each took ~6 s on a CI
+    // runner -- enough to blow the default test timeout. Reporting the offending
+    // index is also far more useful than "expected true, got false" 480,000 times.
+    let badHeight = -1;
+    for (let i = 0; i < field.heights.length; i++) {
+      if (!Number.isFinite(field.heights[i])) {
+        badHeight = i;
+        break;
+      }
+    }
+    expect(badHeight, `non-finite height at post index ${badHeight}`).toBe(-1);
+
     const n = v3();
+    let worstNormalError = 0;
+    let worstAt = '';
     for (let k = 0; k < 3000; k++) {
       const x = -200 + Math.random() * 400;
       const z = Math.random() * 1200;
-      expect(Number.isFinite(field.height(x, z))).toBe(true);
+      if (!Number.isFinite(field.height(x, z))) {
+        throw new Error(`non-finite sampled height at (${x}, ${z})`);
+      }
       field.normal(x, z, n);
-      expect(Math.hypot(n.x, n.y, n.z)).toBeCloseTo(1, 6);
+      const err = Math.abs(Math.hypot(n.x, n.y, n.z) - 1);
+      if (err > worstNormalError) {
+        worstNormalError = err;
+        worstAt = `(${x.toFixed(1)}, ${z.toFixed(1)})`;
+      }
     }
+    expect(worstNormalError, `worst non-unit normal at ${worstAt}`).toBeLessThan(1e-6);
   });
 
   it('spawns the rider on the surface facing downhill', () => {

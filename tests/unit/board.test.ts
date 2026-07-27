@@ -16,6 +16,7 @@ import { buildTestSlope } from '../../src/track/testSlope.js';
 import { fnv1aFloats, toHex } from '../../src/core/hash.js';
 import { v3 } from '../../src/core/vec3.js';
 import { angleDelta } from '../../src/core/math.js';
+import { SimEventKind } from '../../src/sim/events.js';
 
 const DT = 1 / 120;
 
@@ -456,6 +457,249 @@ describe('board grip and surfaces', () => {
     stepBoard(state, createInputState(), field, DT, ctx);
     expect(state.skid).toBeGreaterThan(0);
     expect(state.skid).toBeLessThanOrEqual(1);
+  });
+});
+
+describe('the carve model', () => {
+  const DOWNHILL = Math.PI / 2;
+
+  /**
+   * Ride a single bend: enter pointing `offset` radians off the fall line, steer onto
+   * it, and release the edge according to `style`. Returns the speed at the exit of
+   * the turn, which is the number that matters -- a speed advantage decays back
+   * toward terminal velocity over a long runout, so what a player feels (and what
+   * compounds across linked turns) is the speed leaving the bend.
+   */
+  function bend(
+    field: Heightfield,
+    style: 'skid' | 'good' | 'late' | 'flick',
+    opts: { offset?: number; entry?: number; tuning?: ReturnType<typeof cloneTuning> } = {},
+  ) {
+    const offset = opts.offset ?? 1.05;
+    const t = opts.tuning ?? cloneTuning();
+    const ctx = createStepContext(t);
+    const state = createBoardState();
+    field.normal(0, 0, spawnNormal);
+    resetBoardState(
+      state,
+      0,
+      field.height(0, 0) + t.RIDE_HEIGHT,
+      0,
+      DOWNHILL + offset,
+      opts.entry ?? 26,
+      spawnNormal,
+    );
+
+    const input = createInputState();
+    input.steerX = -Math.sign(offset) * 0.85;
+    input.carve.held = style !== 'skid';
+
+    let released = false;
+    let overshootStart = 0;
+    let exitSpeed = 0;
+    let pumpEvents = 0;
+
+    for (let i = 0; i < 120 * 8; i++) {
+      if (input.carve.released) input.carve.released = false;
+      const onFallLine = Math.abs(angleDelta(state.yaw, DOWNHILL)) < 0.12;
+
+      if (!released) {
+        if (style === 'late' && onFallLine && overshootStart === 0) overshootStart = i;
+        const letGo =
+          style === 'good'
+            ? onFallLine
+            : style === 'late'
+              ? overshootStart > 0 && i - overshootStart > 120 * 0.7
+              : style === 'flick'
+                ? i > 120 * 0.15
+                : false;
+        if (letGo) {
+          input.carve.held = false;
+          input.carve.released = true;
+          input.steerX = 0;
+          released = true;
+        }
+        if (style === 'skid' && onFallLine) input.steerX = 0;
+      }
+
+      stepBoard(state, input, field, DT, ctx);
+      ctx.events.forEach((e) => {
+        if (e.kind === SimEventKind.PumpBoost) pumpEvents++;
+      });
+      ctx.events.clear();
+
+      // Sample a third of a second past the exit, once the boost has been applied.
+      const settled = style === 'skid' ? onFallLine : released;
+      if (settled && exitSpeed === 0 && i > 120 * 0.3) {
+        exitSpeed = groundSpeed(state);
+      }
+    }
+
+    return {
+      exitSpeed: exitSpeed || groundSpeed(state),
+      offFallLine: Math.abs(angleDelta(state.yaw, DOWNHILL)),
+      pumpEvents,
+    };
+  }
+
+  it('carving through a bend exits faster than skidding through it', () => {
+    // Feel-gate criterion #1, and the single number that decides whether this phase
+    // succeeded. If a committed edge is not worth more than just steering, the
+    // central mechanic has no reason to exist.
+    const field = plane(0.2, SurfaceId.Groomed, 3000);
+    const skid = bend(field, 'skid');
+    const carve = bend(field, 'good');
+
+    expect(carve.exitSpeed).toBeGreaterThan(skid.exitSpeed);
+    // And it exits better aimed, which is the compounding half of the advantage.
+    expect(carve.offFallLine).toBeLessThan(skid.offFallLine);
+  });
+
+  it('punishes holding the edge past the fall line', () => {
+    // The cost half. Over-carving is the most common way to be bad at this, and it
+    // has to hurt or there is no decision in when to release.
+    const field = plane(0.2, SurfaceId.Groomed, 3000);
+    const good = bend(field, 'good');
+    const late = bend(field, 'late');
+
+    expect(late.exitSpeed).toBeLessThan(good.exitSpeed * 0.85);
+    expect(late.offFallLine).toBeGreaterThan(good.offFallLine);
+  });
+
+  it('pays nothing for a flick of the edge', () => {
+    // PUMP_MIN_HOLD exists so the reward is for committing to a turn, not for
+    // mashing the carve button. A flick should earn no event at all.
+    const field = plane(0.2, SurfaceId.Groomed, 3000);
+    const flick = bend(field, 'flick');
+    expect(flick.pumpEvents).toBe(0);
+  });
+
+  it('pays for a committed edge released onto the fall line', () => {
+    const field = plane(0.2, SurfaceId.Groomed, 3000);
+    const good = bend(field, 'good');
+    expect(good.pumpEvents).toBeGreaterThan(0);
+  });
+
+  it('pays nothing for releasing while still pointing across the hill', () => {
+    // The alignment condition, and the reason the rule is learnable: you get the
+    // boost when you come out onto the fall line, not merely for having carved.
+    const field = plane(0.25, SurfaceId.Groomed, 3000);
+    const t = cloneTuning();
+    const ctx = createStepContext(t);
+    const state = createBoardState();
+    field.normal(0, 0, spawnNormal);
+    // Pointing 90 degrees off the fall line, straight across the slope.
+    resetBoardState(state, 0, field.height(0, 0) + t.RIDE_HEIGHT, 0, 0, 20, spawnNormal);
+
+    const input = createInputState();
+    input.carve.held = true;
+    input.steerX = 0.3;
+    // Hold well past PUMP_MIN_HOLD so only alignment can disqualify it.
+    for (let i = 0; i < 120; i++) stepBoard(state, input, field, DT, ctx);
+    ctx.events.clear();
+
+    // Force the board back across the hill, then release there.
+    state.yaw = Math.PI;
+    input.carve.held = false;
+    input.carve.released = true;
+    stepBoard(state, input, field, DT, ctx);
+
+    let pumps = 0;
+    ctx.events.forEach((e) => {
+      if (e.kind === SimEventKind.PumpBoost) pumps++;
+    });
+    expect(pumps).toBe(0);
+  });
+
+  it('scales the boost by how long the edge was held', () => {
+    const field = plane(0.2, SurfaceId.Groomed, 3000);
+    const t = cloneTuning();
+
+    const measure = (holdSeconds: number): number => {
+      const ctx = createStepContext(t);
+      const state = createBoardState();
+      field.normal(0, 0, spawnNormal);
+      resetBoardState(state, 0, field.height(0, 0) + t.RIDE_HEIGHT, 0, DOWNHILL, 20, spawnNormal);
+      const input = createInputState();
+      input.carve.held = true;
+      for (let i = 0; i < Math.round(holdSeconds * 120); i++) {
+        stepBoard(state, input, field, DT, ctx);
+      }
+      ctx.events.clear();
+      input.carve.held = false;
+      input.carve.released = true;
+      stepBoard(state, input, field, DT, ctx);
+
+      let boost = 0;
+      ctx.events.forEach((e) => {
+        if (e.kind === SimEventKind.PumpBoost) boost = e.a;
+      });
+      return boost;
+    };
+
+    const brief = measure(t.PUMP_MIN_HOLD + 0.02);
+    const committed = measure(t.PUMP_MIN_HOLD * 3);
+    expect(brief).toBeGreaterThan(0);
+    expect(committed).toBeGreaterThan(brief * 1.5);
+  });
+
+  it('resolves the pump before the hold timer resets', () => {
+    // A regression guard for a bug that is silent when present. On the tick the
+    // release edge arrives `carve.held` is already false, so updating edgeHoldTime
+    // first zeroes the very duration the reward scales by -- and the pump then never
+    // fires at all, with nothing to indicate why.
+    const field = plane(0.2, SurfaceId.Groomed, 3000);
+    const ctx = createStepContext(cloneTuning());
+    const state = createBoardState();
+    field.normal(0, 0, spawnNormal);
+    resetBoardState(
+      state,
+      0,
+      field.height(0, 0) + DEFAULT_TUNING.RIDE_HEIGHT,
+      0,
+      DOWNHILL,
+      22,
+      spawnNormal,
+    );
+
+    const input = createInputState();
+    input.carve.held = true;
+    for (let i = 0; i < 120; i++) stepBoard(state, input, field, DT, ctx);
+    expect(state.edgeHoldTime).toBeGreaterThan(DEFAULT_TUNING.PUMP_MIN_HOLD);
+
+    ctx.events.clear();
+    input.carve.held = false;
+    input.carve.released = true;
+    stepBoard(state, input, field, DT, ctx);
+
+    let fired = false;
+    ctx.events.forEach((e) => {
+      if (e.kind === SimEventKind.PumpBoost) fired = true;
+    });
+    expect(fired).toBe(true);
+    // And the timer really is cleared afterwards, so it cannot double-pay.
+    expect(state.edgeHoldTime).toBe(0);
+  });
+
+  it('charges carve drag in proportion to how hard the board is turning', () => {
+    // Scaled by turn rate rather than edge alone: an edge set and running nearly
+    // straight should be cheap, a violent direction change expensive. That shape is
+    // what makes a good line faster than a brutal one.
+    const field = plane(0.12, SurfaceId.Groomed, 3000);
+
+    const gentle = spawn(field, 24);
+    const hard = spawn(field, 24);
+    const gentleInput = createInputState();
+    gentleInput.carve.held = true;
+    gentleInput.steerX = 0.08;
+    const hardInput = createInputState();
+    hardInput.carve.held = true;
+    hardInput.steerX = 1;
+
+    run(gentle, field, gentleInput, 1.2);
+    run(hard, field, hardInput, 1.2);
+
+    expect(groundSpeed(gentle)).toBeGreaterThan(groundSpeed(hard));
   });
 });
 

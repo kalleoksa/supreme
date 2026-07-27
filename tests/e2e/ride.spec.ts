@@ -81,12 +81,22 @@ test.describe('riding', () => {
       const before = h.riderState()!;
       h.simulate(120 * 3, { steerX: 1, carve: true });
       const during = h.riderState()!;
-      // Steer back toward the fall line, then tuck -- what a player does. Three
-      // seconds of full lock leaves the board traversing across the hill, and a
-      // traverse holds its altitude by design: it is not a stuck state, it just is
-      // not descending, and only steering changes that.
-      h.simulate(120 * 2, { steerX: 0.6 });
-      h.simulate(120 * 5, { steerY: 1 });
+
+      // Steer back to the fall line, then tuck -- what a player does. Closed-loop
+      // rather than a fixed duration, because three seconds of full lock can leave
+      // the board anywhere: a traverse holds its altitude by design, so it is not a
+      // stuck state, but only steering gets it descending again. A fixed steer
+      // duration tests the script's luck, not the game.
+      const DOWNHILL_DEG = 90;
+      for (let i = 0; i < 15; i++) {
+        const deg = ((h.riderState()!.yaw * 180) / Math.PI) % 360;
+        let delta = DOWNHILL_DEG - ((deg + 360) % 360);
+        while (delta > 180) delta -= 360;
+        while (delta < -180) delta += 360;
+        if (Math.abs(delta) < 12) break;
+        h.simulate(30, { steerX: Math.sign(delta) * 0.8 });
+      }
+      h.simulate(120 * 6, { steerY: 1 });
       const after = h.riderState()!;
       return { before, during, after };
     });
