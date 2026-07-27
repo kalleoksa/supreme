@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect width="32" height="32" rx="6" fill="#0b0e13" />
+  <!-- A slope with a rider's arc over it. -->
+  <path d="M2 26 L12 18 L20 21 L30 11 L30 30 L2 30 Z" fill="#e4edf7" />
+  <path d="M6 21 Q14 6 27 9" stroke="#4ea3ff" stroke-width="2.2" fill="none" stroke-linecap="round" />
+  <circle cx="27" cy="9" r="2.6" fill="#4ea3ff" />
+</svg>

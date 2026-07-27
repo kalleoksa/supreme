@@ -1,0 +1,53 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn",
+    "perf": "warn"
+  },
+  "env": {
+    "browser": true,
+    "es2022": true
+  },
+  "ignorePatterns": ["dist/**", "coverage/**"],
+  "rules": {
+    "eqeqeq": "error",
+    "no-console": "off",
+    // __GAME is the deliberate, documented test hook. The dunder is the point:
+    // it marks it as not part of any real API.
+    "no-underscore-dangle": ["warn", { "allow": ["__GAME"] }]
+  },
+  "overrides": [
+    {
+      "files": ["src/sim/**", "src/track/**", "src/race/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["three", "three/*", "**/render/*", "**/hud/*", "**/audio/*"],
+                "message": "sim/track/race must stay pure: no renderer, DOM or audio imports. See tests/unit/architecture.test.ts."
+              }
+            ]
+          }
+        ],
+        "no-restricted-globals": [
+          "error",
+          {
+            "name": "document",
+            "message": "sim must not touch the DOM."
+          },
+          {
+            "name": "window",
+            "message": "sim must not touch the DOM."
+          },
+          {
+            "name": "performance",
+            "message": "sim must not read a wall clock; dt is always passed in."
+          }
+        ]
+      }
+    }
+  ]
+}

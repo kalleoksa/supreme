@@ -1,0 +1,36 @@
+{
+  "name": "whiteout",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Arcade downhill snowboarding. Browser-first, installable, no app store.",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint src tests",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "ci": "npm run typecheck && npm run lint && npm run format:check && npm run test && npm run build && npm run test:e2e"
+  },
+  "dependencies": {
+    "three": "0.185.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.0",
+    "@types/node": "^24.13.3",
+    "@types/three": "0.185.1",
+    "oxlint": "1.76.0",
+    "prettier": "3.9.6",
+    "typescript": "7.0.2",
+    "vite": "8.1.5",
+    "vitest": "4.1.10"
+  }
+}
