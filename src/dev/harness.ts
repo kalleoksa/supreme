@@ -1,4 +1,21 @@
-import type { Game } from '../app/Game.js';
+import type { Game, ScriptedInput } from '../app/Game.js';
+
+export interface RiderSnapshot {
+  x: number;
+  y: number;
+  z: number;
+  speed: number;
+  kmh: number;
+  yaw: number;
+  grounded: boolean;
+  airTime: number;
+  apexHeight: number;
+  edge: number;
+  skid: number;
+  vLong: number;
+  vLat: number;
+  simTime: number;
+}
 
 /**
  * Test surface exposed on `window.__GAME`.
@@ -26,6 +43,16 @@ export interface GameHarness {
   setView(x: number, y: number, z: number, yaw: number, pitch?: number): void;
   /** Height of the terrain surface plus an offset, for placing a view on the snow. */
   viewFromSurface(x: number, z: number, above: number, yaw: number, pitch?: number): void;
+  /**
+   * Advance the simulation deterministically with scripted input, ignoring the wall
+   * clock. The real loop clamps at MAX_STEPS, so under software GL it degrades to
+   * slow motion and cannot drive the rider anywhere useful.
+   */
+  simulate(steps: number, script?: ScriptedInput): void;
+  /** Reset the rider to the start gate. */
+  respawn(): void;
+  /** Compact snapshot of the rider, for assertions and diagnostics. */
+  riderState(): RiderSnapshot | null;
   /** Terrain height under (x, z) as the *sampler* sees it. */
   sampleHeight(x: number, z: number): number | null;
   /** Terrain height under (x, z) as the *drawn mesh* sees it. */
@@ -87,6 +114,34 @@ export function installHarness(): GameHarness {
       const game = harness.game;
       if (!game) return;
       game.setView(x, game.field.height(x, z) + above, z, yaw, pitch);
+    },
+    simulate(steps, script) {
+      harness.game?.simulate(steps, script);
+    },
+    respawn() {
+      harness.game?.respawn();
+    },
+    riderState() {
+      const game = harness.game;
+      if (!game) return null;
+      const b = game.board;
+      const speed = Math.hypot(b.vel.x, b.vel.z);
+      return {
+        x: b.pos.x,
+        y: b.pos.y,
+        z: b.pos.z,
+        speed,
+        kmh: speed * 3.6,
+        yaw: b.yaw,
+        grounded: b.grounded,
+        airTime: b.airTime,
+        apexHeight: b.apexHeight,
+        edge: b.edge,
+        skid: b.skid,
+        vLong: b.vLong,
+        vLat: b.vLat,
+        simTime: b.time,
+      };
     },
     sampleHeight(x, z) {
       if (!harness.game) return null;

@@ -1,7 +1,10 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    // lib ahead of target on purpose: `toSorted`/`toReversed` are runtime methods,
+    // not syntax, so the es2022 build target does not need to transpile them and
+    // every browser this game targets has shipped them.
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "bundler",
     // `node` is here for the config files and the test suite only. Nothing under

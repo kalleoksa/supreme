@@ -100,6 +100,26 @@ diagonal split, and a unit test raycasts the real geometry to prove they agree t
 derivative — that derivative is discontinuous across cell boundaries and reads in
 play as a tick in board orientation every metre.
 
+### Steering is a commanded radius, not a commanded yaw rate
+
+The obvious way to make a board feel heavy is a yaw rate that falls as speed rises.
+Don't. It has a failure that only shows up in play: turning scrubs speed, lower
+speed raises the turn rate, and the higher rate scrubs more speed. One held input
+spirals the board into a stationary spin — measured on the test slope, a
+one-second carve at 87 km/h rotated it 134° and left it at 2 km/h facing uphill,
+with no way back.
+
+`omega = speed / radius` inverts the coupling so it cannot run away, and it is
+closer to how a board really behaves, since edge angle sets radius rather than
+rate. `PIVOT_RATE` is what keeps a stopped rider able to turn around at all.
+
+Relatedly, off-edge lateral grip is deliberately _loose_ (`BASE_LAT_FRICTION`
+1.3, not 5). High off-edge grip made carving nearly invisible — the board railed
+whether or not you asked it to — and let a rider turned across the fall line
+hockey-stop to a permanent halt. The `SKID_ALIGN_RATE` weathervane, scaled by
+skid so it never fights a clean carve, is what stops a skidding board sliding
+sideways down the whole mountain.
+
 ### Terrain is tuned against measurements
 
 Crest spacing along the fall line, grade distribution, and stall/uphill fractions
@@ -123,7 +143,7 @@ and tricks, a timer and a finish line.
 
 - [x] Phase 0 — scaffold, renderer, context-loss handling, CI
 - [x] Phase 1 — fixed-timestep loop, heightfield sampler, chunked terrain
-- [ ] Phase 2 — input, first ride
+- [x] Phase 2 — input, first ride: it plays, at ~87 km/h
 - [ ] Phase 3 — carve model
 - [ ] Phase 4 — charged ollie
 - [ ] Phase 5 — tricks and landing

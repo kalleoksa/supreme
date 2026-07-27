@@ -5,8 +5,14 @@ export interface LoopHandlers {
   /**
    * Advance the simulation by exactly FIXED_DT. Called 0..MAX_STEPS times per
    * frame. `tick` is the monotonic simulation tick index.
+   *
+   * `indexInBatch` is this step's position within the current frame, starting at 0.
+   * It is what lets the input layer place a button edge in the correct sub-frame
+   * time slot instead of rounding it to the frame boundary -- which is the
+   * difference between the ollie's release timing feeling sharp and feeling
+   * arbitrary on a slow display.
    */
-  step(tick: number, dt: number): void;
+  step(tick: number, dt: number, indexInBatch: number): void;
 
   /**
    * Draw one frame. `alpha` is the fraction of a step remaining in the
@@ -68,7 +74,7 @@ export class Loop {
 
     let steps = 0;
     while (this.accumulator >= FIXED_DT && steps < MAX_STEPS) {
-      this.handlers.step(this.stats.tick, FIXED_DT);
+      this.handlers.step(this.stats.tick, FIXED_DT, steps);
       this.stats.tick++;
       this.accumulator -= FIXED_DT;
       steps++;

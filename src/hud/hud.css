@@ -1,0 +1,82 @@
+.hud-root {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 2px 10px rgb(4 8 14 / 55%);
+}
+
+/* Bottom-centre: near where the eyes already are, and out of the way of the
+   terrain ahead, which is what the player is actually reading at speed. */
+.hud-speed {
+  position: absolute;
+  left: 50%;
+  bottom: 2.2rem;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+.hud-speed-value {
+  font-size: clamp(2.4rem, 5vw, 3.6rem);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.hud-unit {
+  font-size: 0.75rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  opacity: 0.65;
+}
+
+.hud-time {
+  position: absolute;
+  top: 1.6rem;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: clamp(1.4rem, 3vw, 2rem);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.hud-air {
+  position: absolute;
+  top: 30%;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  opacity: 0.8;
+}
+
+.hud-edge {
+  position: absolute;
+  left: 50%;
+  bottom: 1.4rem;
+  transform: translateX(-50%);
+  width: min(18rem, 44vw);
+  height: 4px;
+  border-radius: 2px;
+  background: rgb(255 255 255 / 14%);
+  overflow: hidden;
+}
+
+.hud-edge-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 2px;
+  background: #7fd0ff;
+  /* Transform/opacity only elsewhere in the HUD; width here is cheap because the
+     element is tiny and it is the clearest way to read a meter. */
+  transition: background-color 120ms ease;
+}
+
+/* Skidding is a warning, not a reward: the colour shift is how a player learns that
+   sliding sideways is costing them the speed the meter otherwise earns. */
+.hud-edge-fill.skidding {
+  background: #ffb457;
+}

@@ -1,27 +1,56 @@
 import * as THREE from 'three';
 import { Loop, type LoopHandlers } from './Loop.js';
 import { RealClock } from './Clock.js';
+import { FIXED_DT } from './config.js';
+import { createInputState } from '../input/InputState.js';
+
+/** Scripted input for `Game.simulate`, used by diagnostics and e2e tests. */
+export interface ScriptedInput {
+  steerX?: number;
+  steerY?: number;
+  carve?: boolean;
+  jump?: boolean;
+  trick?: boolean;
+  carveAnalog?: number;
+}
 import { Renderer } from '../render/Renderer.js';
 import { Environment } from '../render/Environment.js';
 import { TerrainMesh } from '../render/TerrainMesh.js';
+import { RiderView } from '../render/RiderView.js';
+import { ChaseCamera } from '../render/ChaseCamera.js';
 import { FlyCamera } from '../dev/FlyCamera.js';
 import { buildTestSlope, type TestSlope } from '../track/testSlope.js';
 import type { Heightfield } from '../sim/Heightfield.js';
-import { createContact, type Contact } from '../sim/Terrain.js';
+import { v3 } from '../core/vec3.js';
+import {
+  copyBoardState,
+  createBoardState,
+  groundSpeed,
+  resetBoardState,
+  type BoardState,
+} from '../sim/BoardState.js';
+import { createStepContext, stepBoard, type BoardStepContext } from '../sim/Board.js';
+import { DEFAULT_TUNING, cloneTuning, type BoardTuning } from '../sim/boardTuning.js';
+import { InputRouter } from '../input/InputRouter.js';
+import { KeyboardSource } from '../input/KeyboardSource.js';
+import { GamepadSource } from '../input/GamepadSource.js';
+import { Hud } from '../hud/Hud.js';
+import '../hud/hud.css';
 
 export interface GameOptions {
   canvas: HTMLCanvasElement;
   hud: HTMLElement;
-  /** Show the frame/terrain readout and enable the fly camera. */
+  /** Show the diagnostic readout and allow toggling the free-fly camera. */
   debug?: boolean;
 }
 
 /**
  * Wires everything together and owns the loop.
  *
- * Phase 1 scope: terrain, environment and a free-fly camera. The `step` hook is
- * already the fixed-timestep seam the board simulation drops into next -- the loop
- * shape does not change when a rider arrives.
+ * The interesting part is `step` versus `render`. `step` runs the pure simulation at
+ * a fixed timestep and nothing else; `render` interpolates between the last two
+ * simulated states and draws. That split is what lets a 30 fps display show smooth
+ * motion while playing exactly the same game as a 144 Hz one.
  */
 export class Game implements LoopHandlers {
   readonly renderer: Renderer;
@@ -31,17 +60,32 @@ export class Game implements LoopHandlers {
   readonly slope: TestSlope;
   readonly loop: Loop;
 
+  readonly board: BoardState;
+  readonly tuning: BoardTuning;
+
+  private readonly prevBoard: BoardState;
+  /** Interpolated pose handed to the renderer; never fed back into the sim. */
+  private readonly viewBoard: BoardState;
+
+  private readonly stepCtx: BoardStepContext;
+  private readonly input: InputRouter;
+  private readonly gamepad: GamepadSource;
+  private readonly riderView: RiderView;
+  private readonly chase: ChaseCamera;
+  private readonly hud: Hud;
   private readonly flyCamera: FlyCamera;
+
   private readonly debugEl: HTMLElement | undefined;
-  private readonly probe: Contact = createContact();
   private lastDebugText = '';
   private debugAccum = 0;
+  private paused = false;
+  private readonly scriptInput = createInputState();
 
-  constructor(private readonly options: GameOptions) {
+  constructor(options: GameOptions) {
     this.renderer = new Renderer(options.canvas, {
       onContextLost: () => {
-        // Stop simulating while there is nothing to draw into, and re-anchor the
-        // clock on restore so the gap is not replayed as a giant timestep.
+        // Stop simulating while there is nothing to draw into, so the gap does not
+        // come back as one enormous timestep to replay.
         this.loop.stop();
       },
       onContextRestored: () => {
@@ -58,28 +102,111 @@ export class Game implements LoopHandlers {
     this.terrain = new TerrainMesh(this.field, this.environment);
     this.renderer.scene.add(this.terrain.group);
 
-    this.flyCamera = new FlyCamera(this.renderer.camera, options.canvas);
-    this.flyCamera.enabled = options.debug ?? false;
+    this.tuning = cloneTuning(DEFAULT_TUNING);
+    this.stepCtx = createStepContext(this.tuning);
 
-    const startY = this.field.height(this.slope.startX, this.slope.startZ);
-    this.flyCamera.lookFrom(this.slope.startX, startY + 22, this.slope.startZ - 40, Math.PI);
+    this.board = createBoardState();
+    this.prevBoard = createBoardState();
+    this.viewBoard = createBoardState();
+
+    this.gamepad = new GamepadSource();
+    this.input = new InputRouter([new KeyboardSource(), this.gamepad]);
+
+    this.riderView = new RiderView(this.environment);
+    this.renderer.scene.add(this.riderView.group);
+
+    // Built before the first respawn, because respawn() snaps the camera and would
+    // otherwise have nothing to snap.
+    this.chase = new ChaseCamera(this.renderer.camera, this.field);
+    this.respawn();
+
+    this.hud = new Hud(options.hud);
+
+    this.flyCamera = new FlyCamera(this.renderer.camera, options.canvas);
+    this.flyCamera.enabled = false;
 
     if (options.debug) {
       const el = document.createElement('div');
       el.id = 'debug';
       options.hud.appendChild(el);
       this.debugEl = el;
+      window.addEventListener('keydown', this.onDebugKey);
     }
 
     this.loop = new Loop(new RealClock(), this);
   }
 
-  step(_tick: number, _dt: number): void {
-    // Phase 2 attaches Board.step / Trick.step / Race.step here.
+  /** Place the rider at the start gate, on the surface, facing downhill. */
+  respawn(): void {
+    const { startX, startZ, startYaw } = this.slope;
+    const y = this.field.height(startX, startZ) + this.tuning.RIDE_HEIGHT;
+    // Project the spawn velocity onto the slope, otherwise the rider starts a moment
+    // airborne on any real pitch.
+    this.field.normal(startX, startZ, spawnNormal);
+    // A small initial speed rather than a standing start: a rider with no velocity on
+    // a shallow section takes an age to get moving, and the whole run is 90 seconds.
+    resetBoardState(this.board, startX, y, startZ, startYaw, 6, spawnNormal);
+    copyBoardState(this.prevBoard, this.board);
+
+    // Snap the camera rather than letting it smooth. A respawn teleports the rider,
+    // and the camera's height tracking has a 0.3 s time constant -- without this it
+    // sails down the mountain from wherever it was, which was measured at 29 m above
+    // the rider after a jump of a hundred metres.
+    this.chase.reset(this.board);
   }
 
-  render(_alpha: number, frameDt: number): void {
-    this.flyCamera.update(frameDt);
+  private onDebugKey = (e: KeyboardEvent): void => {
+    if (e.code === 'KeyF') {
+      // Toggle between the chase camera and free flight, for inspecting the track.
+      this.flyCamera.enabled = !this.flyCamera.enabled;
+      if (this.flyCamera.enabled) {
+        const cam = this.renderer.camera.position;
+        this.flyCamera.setPose(cam.x, cam.y, cam.z, this.board.yaw, -0.2);
+      } else {
+        this.chase.reset(this.board);
+      }
+    }
+  };
+
+  step(_tick: number, dt: number, indexInBatch: number): void {
+    // `indexInBatch`, not the loop's step counter: that counter only updates once the
+    // batch finishes, so using it here would place every edge in the previous
+    // frame's time window.
+    const input = this.input.sampleForTick(indexInBatch, dt);
+
+    if (input.meta.reset) this.respawn();
+    if (input.meta.pause) this.paused = !this.paused;
+    if (this.paused) return;
+
+    // The gamepad's analog trigger travel rides alongside the digital latch, so
+    // partial edge engagement is available without adding a fourth input verb.
+    this.stepCtx.carveAnalog =
+      this.input.activeSourceId === 'gamepad' ? this.gamepad.carveAnalog : 1;
+
+    copyBoardState(this.prevBoard, this.board);
+    stepBoard(this.board, input, this.field, dt, this.stepCtx);
+
+    // Fell off the world, or wandered somewhere the field does not cover.
+    if (!this.field.contains(this.board.pos.x, this.board.pos.z)) this.respawn();
+  }
+
+  render(alpha: number, frameDt: number): void {
+    // Interpolate the pose so a 30 fps display still moves smoothly. Only the
+    // continuous quantities are blended; discrete state comes from the newest step,
+    // because a half-grounded board is not a meaningful thing to draw.
+    copyBoardState(this.viewBoard, this.board);
+    this.viewBoard.pos.x = lerpScalar(this.prevBoard.pos.x, this.board.pos.x, alpha);
+    this.viewBoard.pos.y = lerpScalar(this.prevBoard.pos.y, this.board.pos.y, alpha);
+    this.viewBoard.pos.z = lerpScalar(this.prevBoard.pos.z, this.board.pos.z, alpha);
+    this.viewBoard.yaw = lerpAngle(this.prevBoard.yaw, this.board.yaw, alpha);
+
+    this.riderView.update(this.viewBoard, frameDt);
+
+    if (this.flyCamera.enabled) this.flyCamera.update(frameDt);
+    else this.chase.update(this.viewBoard, frameDt);
+
+    this.hud.update(this.viewBoard);
+    this.stepCtx.events.clear();
 
     const cam = this.renderer.camera.position;
     this.terrain.update(cam.x, cam.z);
@@ -89,28 +216,26 @@ export class Game implements LoopHandlers {
   }
 
   private updateDebug(frameDt: number): void {
-    // Throttle: rewriting text every frame is layout thrash for information a
-    // human cannot read at 120 Hz anyway.
     this.debugAccum += frameDt;
     if (this.debugAccum < 0.1) return;
     this.debugAccum = 0;
 
-    const cam = this.renderer.camera.position;
+    const b = this.board;
     const info = this.renderer.info;
-    const inBounds = this.field.contains(cam.x, cam.z);
-    if (inBounds) this.field.support(cam.x, cam.z, cam.y, 0, this.probe);
-
     const text = [
-      `fps      ${(1 / Math.max(frameDt, 1e-6)).toFixed(0)}  steps ${this.loop.stats.steps}${
+      `fps    ${(1 / Math.max(frameDt, 1e-6)).toFixed(0)}  steps ${this.loop.stats.steps}${
         this.loop.stats.starved ? ' STARVED' : ''
       }`,
-      `tick     ${this.loop.stats.tick}`,
-      `draws    ${info.calls}   tris ${info.triangles.toLocaleString('en-US')}`,
-      `chunks   ${this.terrain.chunkCount}`,
-      `cam      ${cam.x.toFixed(1)} ${cam.y.toFixed(1)} ${cam.z.toFixed(1)}`,
-      inBounds
-        ? `ground   ${this.probe.y.toFixed(2)} m  n.y ${this.probe.ny.toFixed(3)}  surf ${this.probe.surface}`
-        : 'ground   (outside field)',
+      `draws  ${info.calls}  tris ${info.triangles.toLocaleString('en-US')}`,
+      `pos    ${b.pos.x.toFixed(1)} ${b.pos.y.toFixed(1)} ${b.pos.z.toFixed(1)}`,
+      `speed  ${groundSpeed(b).toFixed(1)} m/s  (${(groundSpeed(b) * 3.6).toFixed(0)} km/h)`,
+      `vLong  ${b.vLong.toFixed(1)}  vLat ${b.vLat.toFixed(2)}  skid ${b.skid.toFixed(2)}`,
+      `yaw    ${((b.yaw * 180) / Math.PI).toFixed(0)}deg  rate ${b.yawRate.toFixed(2)}`,
+      `edge   ${b.edge.toFixed(2)}  hold ${b.edgeHoldTime.toFixed(2)}s`,
+      b.grounded
+        ? `ground slope ${((b.slopeAngle * 180) / Math.PI).toFixed(0)}deg  surf ${b.ground.surface}  grip ${b.ground.grip.toFixed(2)}`
+        : `AIR    ${b.airTime.toFixed(2)}s  apex ${b.apexHeight.toFixed(1)}m`,
+      this.flyCamera.enabled ? 'camera FLY (F to return)' : 'camera CHASE (F to fly)',
     ].join('\n');
 
     if (text !== this.lastDebugText) {
@@ -127,31 +252,91 @@ export class Game implements LoopHandlers {
     this.loop.stop();
   }
 
-  /** Advance exactly one frame. Used by the e2e input tests. */
+  /** Advance exactly one frame. Used by the e2e tests. */
   frameStep(): void {
     this.loop.advance();
   }
 
-  /** Place the camera explicitly. Used for capturing diagnostic views. */
+  /** Place the camera explicitly, for capturing diagnostic views. */
   setView(x: number, y: number, z: number, yaw: number, pitch = -0.2): void {
+    this.flyCamera.enabled = true;
     this.flyCamera.setPose(x, y, z, yaw, pitch);
+  }
+
+  /**
+   * Advance the simulation by `steps` fixed timesteps with scripted input, ignoring
+   * the wall clock entirely.
+   *
+   * Needed because the real loop is wall-clock driven and clamps at MAX_STEPS, so on
+   * a software renderer running at a handful of frames per second it correctly
+   * degrades to slow motion -- covering a fraction of a second of simulated time per
+   * real second. That is the right behaviour for a player on a slow machine and
+   * useless for driving the rider somewhere in a diagnostic capture.
+   */
+  simulate(steps: number, script: ScriptedInput = {}): void {
+    const input = this.scriptInput;
+    input.steerX = script.steerX ?? 0;
+    input.steerY = script.steerY ?? 0;
+    input.carve.held = script.carve ?? false;
+    input.jump.held = script.jump ?? false;
+    input.trick.held = script.trick ?? false;
+    input.carve.pressed = false;
+    input.carve.released = false;
+    input.jump.pressed = false;
+    input.jump.released = false;
+    input.trick.pressed = false;
+    input.trick.released = false;
+
+    this.stepCtx.carveAnalog = script.carveAnalog ?? 1;
+
+    for (let i = 0; i < steps; i++) {
+      copyBoardState(this.prevBoard, this.board);
+      stepBoard(this.board, input, this.field, FIXED_DT, this.stepCtx);
+      if (!this.field.contains(this.board.pos.x, this.board.pos.z)) {
+        this.respawn();
+        break;
+      }
+    }
+    // No frames were drawn during those steps, so the camera's smoothed state refers
+    // to wherever the rider used to be. Snap it, and re-anchor the clock so the loop
+    // does not treat the elapsed wall time as simulation it still owes.
+    copyBoardState(this.prevBoard, this.board);
+    this.chase.reset(this.board);
+    this.loop.resync();
   }
 
   dispose(): void {
     this.loop.stop();
+    window.removeEventListener('keydown', this.onDebugKey);
+    this.input.dispose();
     this.flyCamera.dispose();
+    this.hud.dispose();
+    this.riderView.dispose();
     this.terrain.dispose();
     this.renderer.dispose();
     this.debugEl?.remove();
-    void this.options;
   }
 
   /** For the e2e mesh/sampler cross-check: raycast the drawn terrain. */
   raycastTerrain(x: number, z: number): number | null {
     const raycaster = new THREE.Raycaster();
-    const from = new THREE.Vector3(x, this.field.maxHeight + 50, z);
-    raycaster.set(from, new THREE.Vector3(0, -1, 0));
+    raycaster.set(new THREE.Vector3(x, this.field.maxHeight + 50, z), new THREE.Vector3(0, -1, 0));
     const hits = raycaster.intersectObject(this.terrain.group, true);
     return hits.length > 0 ? hits[0].point.y : null;
   }
+}
+
+/** Reused across respawns; nothing in the render path allocates. */
+const spawnNormal = v3();
+
+function lerpScalar(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
+/** Shortest-path angle interpolation, so crossing +/-PI does not spin the rider. */
+function lerpAngle(a: number, b: number, t: number): number {
+  let delta = b - a;
+  while (delta > Math.PI) delta -= Math.PI * 2;
+  while (delta < -Math.PI) delta += Math.PI * 2;
+  return a + delta * t;
 }
