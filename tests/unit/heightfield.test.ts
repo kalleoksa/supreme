@@ -3,7 +3,8 @@ import * as THREE from 'three';
 import { Heightfield } from '../../src/sim/Heightfield.js';
 import { createContact, SurfaceId, TerrainFlag } from '../../src/sim/Terrain.js';
 import { buildChunkGeometry } from '../../src/render/terrainGeometry.js';
-import { buildTestSlope } from '../../src/track/testSlope.js';
+import { generateTrack } from '../../src/track/generate.js';
+import { TEST_SLOPE } from '../../src/track/tracks/testSlope.js';
 import { v3, type Vec2 } from '../../src/core/vec3.js';
 
 /** A field whose height is an exact analytic function, so results are checkable. */
@@ -135,7 +136,9 @@ describe('Heightfield normal continuity', () => {
   // Per-post normals blended bilinearly are C0 across cell boundaries. The
   // alternative -- the bilinear patch's own derivative -- is discontinuous there,
   // and shows up in play as a tick in board orientation every metre.
-  const { field } = buildTestSlope({ lengthMetres: 160, widthMetres: 120, spacing: 1 });
+  // A smaller field, for speed. Overriding a track is a spread now that the terrain is a
+  // spec compiled by a pure function -- which is most of the reason for the format.
+  const { field } = generateTrack({ ...TEST_SLOPE, lengthMetres: 160, widthMetres: 120 });
 
   it('has no jump in the normal across cell boundaries', () => {
     const a = v3();

@@ -60,6 +60,7 @@ both.
 | `npm run test`                 | Unit tests (Node, no GPU needed)                      |
 | `npm run test:e2e`             | Playwright browser tests                              |
 | `npm run ci`                   | Everything: typecheck, lint, format, unit, build, e2e |
+| `npm run validate`             | Grade, drop and launch-feature report per track       |
 | `node tools/capture-views.mjs` | Diagnostic screenshots of a track from rider height   |
 
 ## Architecture
@@ -82,7 +83,7 @@ src/
   core/     math, vectors, seeded rng, noise, hashing
   input/    normalized input state; keyboard and gamepad backends
   sim/      heightfield sampler, board physics, tricks, landing, race   [pure]
-  track/    track spec and the deterministic spec -> heightfield generator
+  track/    TrackSpec, the pure spec -> heightfield generator, the validator
   render/   three.js: terrain, rider, camera, environment
   hud/      DOM overlay
 ```
@@ -173,6 +174,54 @@ scripted `InputState` directly and bypasses the router entirely.
 There are now tests that press a real key and assert the simulation responds. If you add
 gameplay tests, at least one of them must go through the real input path.
 
+### A track is data, compiled by a pure function
+
+Authoring truth is a `TrackSpec` (`src/track/TrackSpec.ts`); runtime truth is a
+`Float32Array` heightfield. `src/track/generate.ts` compiles one to the other,
+deterministically, with no dependencies beyond `core`.
+
+The composition order **is** the format:
+
+1. `grade` — integrate a grade profile into a centreline elevation. Authoring
+   grades rather than absolute heights means editing one section leaves everything
+   downhill of it consistent.
+2. `cross` — sweep a cross-section: a near-flat ridable corridor, then shoulders
+   that climb to turn back a wandering rider.
+3. `stamps` — analytic features, each writing its falloff into a feature mask.
+4. `noise` — detail bands multiplied by `1 - featureMask`.
+5. `smoothing` — weighted by `1 - featureMask` so stamp interiors survive.
+6. `surfaces` — materials and flags from slope, position and noise.
+
+**Step 4 is the one that matters.** Detail noise suppressed inside authored
+features and amplified out on the wild shoulders is the difference between a
+mountain a player can read and a field of bumps that drowns every deliberately
+placed lip. A unit test pins it: generate the same spec with and without the noise
+bands, and the heights must agree inside a stamp while differing by a metre on the
+open shoulder.
+
+Because the generator is a pure function called from a module Vite already hot
+reloads, editing a track re-bakes the terrain in the browser — the loop that
+decides whether a track is fun needs no build step and no baker script. The tuning
+slope was ported to this format against its **golden height hash**, so the spec
+provably expresses the same terrain rather than something that merely looks similar.
+
+`npm run validate` reports what tuning actually needs:
+
+```
+testslope: 1164 m of course, 282 m vertical
+  median grade 22.7%, uphill 1.7%, 10 launch features
+  shallowest 20 m -1.2% at z=986, steepest 62.7% at z=706
+  no issues
+```
+
+Errors mean a run cannot continue (a section shallow enough to stall, a boundary
+off the heightfield); warnings mean it is probably not what the author intended but
+is rideable, so tuning is never blocked. One subtlety worth knowing: a roller's
+approach ramp genuinely climbs, and raw grade cannot tell that apart from a flat
+section that kills a run — so the stall check consults the feature mask. That was
+found by the check firing on the tuning slope at z=986, which is exactly the
+leading edge of the roller stamped at z=1010.
+
 ### Race progress is a baked geodesic field, not a centreline
 
 Projecting the rider onto a spline down the middle of the course would contradict
@@ -258,8 +307,11 @@ and tricks, a timer and a finish line.
 - [x] Phase 4 — charged ollie: the mechanic this was all built around
 - [x] Phase 5 — tricks and landing, with named failure reasons
 - [ ] Phase 6 — the authored track
-      — race logic done (progress field, countdown, splits, sub-frame finish,
-      out-of-bounds recovery, stored best); `TrackSpec` and `alpine01` still to come
+      — done: race logic (progress field, countdown, splits, sub-frame finish,
+      out-of-bounds recovery, stored best), the `TrackSpec` format, the generator
+      and the validator. Remaining: instanced scatter, and authoring `alpine01`
+      with its three route choices — which the feel gate below deliberately blocks,
+      because content on a bad ride is wasted content.
 - [x] Phase 7 — ghost recording (transform capture; playback is M2)
 - [ ] Phase 8 — audio, comfort settings, feel pass
 
