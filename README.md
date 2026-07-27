@@ -120,6 +120,30 @@ hockey-stop to a permanent halt. The `SKID_ALIGN_RATE` weathervane, scaled by
 skid so it never fights a clean carve, is what stops a skidding board sliding
 sideways down the whole mountain.
 
+### The carve has to cost something
+
+Carve drag scales with **turn rate**, not with edge engagement alone. A flat cost for
+having the edge down makes carving strictly worse than not carving — a one-second
+full carve at 87 km/h already loses 87→70 from lateral scrubbing, and a 0.9/s decay
+on top takes the exit to ~28. Scaling by how hard the board is turning means an edge
+running nearly straight is cheap and a violent direction change is expensive, which
+is what makes a good line faster than a brutal one.
+
+The reward is the pump: release a committed edge coming out onto the fall line and it
+pays speed back. Measured entering a bend 60° off the fall line on a 20% slope:
+
+| line                             | exit      | off fall line |
+| -------------------------------- | --------- | ------------- |
+| carve, released on the fall line | 90.0 km/h | 7°            |
+| steering only, no edge           | 88.7 km/h | 14°           |
+| released too early (a flick)     | 86.8 km/h | 48°           |
+| held past the fall line          | 68.4 km/h | 53°           |
+
+The good-versus-skid margin is thinner than ideal and is on the list for the feel
+pass. A speed advantage decays back toward terminal velocity, so the pump's value is
+transient — it compounds across linked turns rather than showing up after a long
+runout.
+
 ### Terrain is tuned against measurements
 
 Crest spacing along the fall line, grade distribution, and stall/uphill fractions
@@ -144,7 +168,7 @@ and tricks, a timer and a finish line.
 - [x] Phase 0 — scaffold, renderer, context-loss handling, CI
 - [x] Phase 1 — fixed-timestep loop, heightfield sampler, chunked terrain
 - [x] Phase 2 — input, first ride: it plays, at ~87 km/h
-- [ ] Phase 3 — carve model
+- [x] Phase 3 — carve model: a cost, a reward, and a way to notice it
 - [ ] Phase 4 — charged ollie
 - [ ] Phase 5 — tricks and landing
 - [ ] Phase 6 — the authored track
