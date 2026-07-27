@@ -157,6 +157,43 @@ export const TEST_SLOPE: TrackSpec = {
     },
   },
 
+  /**
+   * Two species of conifer.
+   *
+   * The corridor density scale is 0.12 rather than 0, and that is the number worth not
+   * "tidying up": trees inside the ridable area are what turn a 240 m wide face into a set
+   * of real route choices. A cleared racing line would make freedom of line mean only that
+   * the corridor is wide. They are excluded around the authored rollers, because a tree in a
+   * landing zone punishes the player for doing exactly what the terrain invited.
+   */
+  scatter: {
+    launchClearance: 1.6,
+    species: [
+      {
+        id: 'spruce',
+        densityPerHectare: 55,
+        surfaces: [SurfaceId.Powder, SurfaceId.Packed, SurfaceId.Groomed],
+        minNormalY: 0.72,
+        radius: 0.55,
+        height: 9,
+        heightVariance: 2.5,
+        seedOffset: 0x2a11,
+        corridorDensityScale: 0.12,
+      },
+      {
+        id: 'sapling',
+        densityPerHectare: 90,
+        surfaces: [SurfaceId.Powder, SurfaceId.Packed],
+        minNormalY: 0.62,
+        radius: 0.28,
+        height: 3.4,
+        heightVariance: 1.1,
+        seedOffset: 0x7b3d,
+        corridorDensityScale: 0.05,
+      },
+    ],
+  },
+
   // Yaw PI/2 faces +Z, which is downhill.
   start: { x: 0, z: 6, yaw: Math.PI / 2 },
   finishInset: 30,

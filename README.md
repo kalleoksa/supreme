@@ -222,6 +222,35 @@ section that kills a run — so the stall check consults the feature mask. That 
 found by the check firing on the tuning slope at z=986, which is exactly the
 leading edge of the roller stamped at z=1010.
 
+### Trees are not cleared from the racing line
+
+This is the design rule most likely to be "tidied up" by someone reasonably assuming
+a racing line should be clear. Obstacles inside the ridable area are what turn a
+240 m wide face into a set of real route choices; without them, freedom of line
+means only that the corridor is wide. So corridor density is scaled down (0.12x),
+never to zero — and props are excluded around authored launch features, because a
+tree in a landing zone punishes the player for doing exactly what the terrain
+invited.
+
+The collision asymmetry follows from the same argument. Below
+`OBSTACLE_CRASH_SPEED` a contact pushes the rider clear, deflects and slows them; at
+or above it, the run is over for `CRASH_RECOVER` seconds. If every contact were a
+crash, the only correct play would be to avoid the trees entirely and the routes
+they exist to create would stop being routes.
+
+Getting the _shape_ of that penalty right mattered more than its magnitude, and a
+measurement is what showed it. A flat per-tick multiplier compounds while a rider
+stays in contact: the headless bot came down the mountain with **8,551 scrape events
+at a mean speed of 9.1 m/s**, against 28.5 with no trees. Trees had stopped being an
+obstacle and become a grinder. Scaling the penalty by the speed _into_ the trunk
+means sliding along one is free and only the genuine impact is paid for — after
+which the bot runs 57.6 s at 20.2 m/s, against 40.8 s on bare terrain. Both halves
+are asserted, because trees have to cost something without costing the run.
+
+3,628 props render in **2 draw calls** via `InstancedMesh`. Geometry is built in
+code from cones and cylinders, like the rider: no modelling pipeline, because art
+must not be able to block work on how the ride feels.
+
 ### Race progress is a baked geodesic field, not a centreline
 
 Projecting the rider onto a spline down the middle of the course would contradict
@@ -308,10 +337,10 @@ and tricks, a timer and a finish line.
 - [x] Phase 5 — tricks and landing, with named failure reasons
 - [ ] Phase 6 — the authored track
       — done: race logic (progress field, countdown, splits, sub-frame finish,
-      out-of-bounds recovery, stored best), the `TrackSpec` format, the generator
-      and the validator. Remaining: instanced scatter, and authoring `alpine01`
-      with its three route choices — which the feel gate below deliberately blocks,
-      because content on a bad ride is wasted content.
+      out-of-bounds recovery, stored best), the `TrackSpec` format, the generator,
+      the validator, and instanced scatter with collision. Remaining: authoring
+      `alpine01` with its three route choices — which the feel gate below
+      deliberately blocks, because content on a bad ride is wasted content.
 - [x] Phase 7 — ghost recording (transform capture; playback is M2)
 - [ ] Phase 8 — audio, comfort settings, feel pass
 

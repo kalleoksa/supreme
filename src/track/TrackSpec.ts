@@ -184,6 +184,55 @@ export interface SurfaceRules {
   };
 }
 
+/**
+ * One species of scattered prop.
+ *
+ * Trees do two jobs, and the second is the one that matters: they give the eye something
+ * to judge speed against, and they turn a wide open face into a set of real route choices.
+ *
+ * **Trees are not cleared from the corridor centre.** That is deliberate and it is the
+ * design rule most likely to be "tidied up" by someone assuming a racing line should be
+ * clear. Obstacles inside the ridable area are what make choosing a line a decision --
+ * without them, freedom of line means only that the corridor is wide. They are excluded
+ * near authored launch lips, where hitting one is a punishment for doing the right thing.
+ */
+export interface ScatterSpecies {
+  /** Identifier, used for the render mesh and for validator output. */
+  id: string;
+  /** Props per hectare on surfaces this species likes. */
+  densityPerHectare: number;
+  /** Surfaces this species grows on. */
+  surfaces: readonly SurfaceId[];
+  /** Steepest normal Y it will grow on; nothing grows on a cliff face. */
+  minNormalY: number;
+  /** Trunk radius in metres, for the collision test. */
+  radius: number;
+  /** Visual height in metres, and how much it varies. */
+  height: number;
+  heightVariance: number;
+  /** XORed into the track seed so species place independently. */
+  seedOffset: number;
+  /**
+   * Multiplier on density inside the groomed corridor.
+   *
+   * Not zero. A groomed piste is thinner than the trees beside it, not bare -- and a bare
+   * corridor is exactly the "wide but featureless" failure that makes route choice
+   * meaningless.
+   */
+  corridorDensityScale: number;
+}
+
+export interface ScatterRules {
+  species: readonly ScatterSpecies[];
+  /**
+   * Metres of clearance kept around a launch feature, as a multiple of its radius.
+   *
+   * A tree in a landing zone punishes the player for doing exactly what the terrain
+   * invited, which is the least fair thing a course can do.
+   */
+  launchClearance: number;
+}
+
 export interface TrackSpec {
   /** Stable identifier. Keys the stored best time, so changing it retires old times. */
   id: string;
@@ -209,6 +258,8 @@ export interface TrackSpec {
   /** Constrained smoothing passes. 2-4; weighted by `1 - featureMask`. */
   smoothingPasses: number;
   surfaces: SurfaceRules;
+  /** Scattered props. Omit for a bare tuning slope. */
+  scatter?: ScatterRules;
 
   /** Spawn on the centreline just below the top edge. */
   start: { x: number; z: number; yaw: number };

@@ -16,7 +16,9 @@ import { timeToGround } from '../sim/Ollie.js';
 import { SimEventKind } from '../sim/events.js';
 import type { DebugPanel } from '../hud/DebugPanel.js';
 import { FlyCamera } from '../dev/FlyCamera.js';
-import { buildTestSlope, type TestSlope } from '../track/testSlope.js';
+import { buildTestSlopeTrack, type TestSlope } from '../track/testSlope.js';
+import type { GeneratedTrack } from '../track/generate.js';
+import { Scatter } from '../render/Scatter.js';
 import type { Heightfield } from '../sim/Heightfield.js';
 import { v3 } from '../core/vec3.js';
 import {
@@ -86,6 +88,8 @@ export class Game implements LoopHandlers {
   readonly terrain: TerrainMesh;
   readonly field: Heightfield;
   readonly slope: TestSlope;
+  /** The full generator output: launch features, scatter and obstacles as well as the field. */
+  readonly track: GeneratedTrack;
   readonly loop: Loop;
 
   readonly board: BoardState;
@@ -106,6 +110,7 @@ export class Game implements LoopHandlers {
   private readonly spray: Spray;
   private readonly hints: WorldHints;
   readonly markers: RaceMarkers;
+  readonly scatter: Scatter;
   private readonly hud: Hud;
   private readonly flyCamera: FlyCamera;
   private tuningPanel: DebugPanel | undefined;
@@ -133,7 +138,8 @@ export class Game implements LoopHandlers {
 
     this.environment = new Environment(this.renderer.scene);
 
-    this.slope = buildTestSlope();
+    this.track = buildTestSlopeTrack();
+    this.slope = this.track;
     this.field = this.slope.field;
 
     this.terrain = new TerrainMesh(this.field, this.environment);
@@ -141,6 +147,7 @@ export class Game implements LoopHandlers {
 
     this.tuning = cloneTuning(DEFAULT_TUNING);
     this.stepCtx = createStepContext(this.tuning);
+    this.stepCtx.obstacles = this.track.obstacles;
 
     // Baked once at load, from the same heightfield the physics reads. A few
     // milliseconds, and it is what makes progress, splits, bounds and the return arrow
@@ -183,6 +190,15 @@ export class Game implements LoopHandlers {
       this.race.rules.splits,
     );
     this.renderer.scene.add(this.markers.group);
+
+    // Instanced: one draw call per species, whatever the tree count. That discipline is why
+    // a populated mountain fits the fifty-draw budget at all.
+    this.scatter = new Scatter(
+      this.environment,
+      this.track.spec.scatter?.species ?? [],
+      this.track.scatter,
+    );
+    this.renderer.scene.add(this.scatter.group);
 
     this.hud = new Hud(options.hud);
 
@@ -483,6 +499,7 @@ export class Game implements LoopHandlers {
     this.tuningPanel?.dispose();
     this.hud.dispose();
     this.spray.dispose();
+    this.scatter.dispose();
     this.markers.dispose();
     this.hints.dispose();
     this.riderView.dispose();

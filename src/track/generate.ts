@@ -1,7 +1,9 @@
 import { clamp01, smoothstep } from '../core/math.js';
+import { hash2f } from '../core/hash.js';
 import { fbm2s } from '../core/noise.js';
 import type { Vec2 } from '../core/vec3.js';
 import { Heightfield } from '../sim/Heightfield.js';
+import { Obstacles } from '../sim/Obstacles.js';
 import { TerrainFlag, type SurfaceId } from '../sim/Terrain.js';
 import { StampKind, type Stamp, type TrackSpec } from './TrackSpec.js';
 
@@ -110,12 +112,27 @@ const LAUNCH_REFERENCE_CURVATURE = 0.09;
 /** Below this the stamp is scenery, not a launch. */
 const LAUNCH_MIN_CURVATURE = 0.02;
 
+export interface ScatterInstance {
+  x: number;
+  z: number;
+  /** Ground height at the base. */
+  y: number;
+  radius: number;
+  height: number;
+  /** Rotation about Y, so a row of identical meshes does not read as a row. */
+  rotation: number;
+  speciesIndex: number;
+}
+
 export interface GeneratedTrack {
   spec: TrackSpec;
   field: Heightfield;
   /** Per-post stamp coverage in 0..1. Kept for the validator and for debug views. */
   featureMask: Float32Array;
   launches: LaunchFeature[];
+  scatter: ScatterInstance[];
+  /** The same scatter as a physics-queryable grid. */
+  obstacles: Obstacles;
   startX: number;
   startZ: number;
   startYaw: number;
@@ -253,6 +270,8 @@ export function generateTrack(spec: TrackSpec): GeneratedTrack {
     });
   }
 
+  const scatter = placeScatter(spec, field, launches);
+
   const finishZ = lengthMetres - spec.finishInset;
 
   return {
@@ -260,6 +279,8 @@ export function generateTrack(spec: TrackSpec): GeneratedTrack {
     field,
     featureMask,
     launches,
+    scatter,
+    obstacles: toObstacles(scatter),
     startX: spec.start.x,
     startZ: spec.start.z,
     startYaw: spec.start.yaw,
@@ -268,6 +289,110 @@ export function generateTrack(spec: TrackSpec): GeneratedTrack {
       { x: cross.boundsHalfWidth, z: finishZ },
     ],
   };
+}
+
+/**
+ * Place scattered props.
+ *
+ * Jittered grid rather than rejection sampling. A jittered grid gives a guaranteed minimum
+ * spacing for free -- which is what stops trees from clumping into an impassable thicket in
+ * one place and leaving a bare patch in another -- and it is a single pass with no retry
+ * loop, so it stays fast and, more importantly, deterministic in count as well as position.
+ *
+ * Placement is seeded from the integer hash rather than a sequential RNG, so a prop's
+ * position depends only on its grid cell. Adding a species, or changing one species'
+ * density, therefore does not shift every other tree on the mountain.
+ */
+function placeScatter(
+  spec: TrackSpec,
+  field: Heightfield,
+  launches: readonly LaunchFeature[],
+): ScatterInstance[] {
+  const rules = spec.scatter;
+  const out: ScatterInstance[] = [];
+  if (!rules) return out;
+
+  const halfWidth = spec.widthMetres / 2;
+  const corridorHalf = spec.cross.corridorHalfWidth;
+  const normal = { x: 0, y: 1, z: 0 };
+
+  for (let s = 0; s < rules.species.length; s++) {
+    const species = rules.species[s];
+    // A hectare is 10,000 m^2, so density sets the cell size directly: one candidate per
+    // cell, jittered inside it.
+    const cell = Math.sqrt(10000 / species.densityPerHectare);
+    const cols = Math.max(1, Math.floor(spec.widthMetres / cell));
+    const rows = Math.max(1, Math.floor(spec.lengthMetres / cell));
+    const seed = (spec.seed ^ species.seedOffset) | 0;
+
+    for (let j = 0; j < rows; j++) {
+      for (let i = 0; i < cols; i++) {
+        // Three independent hashes per cell: two for the jitter, one for the size and the
+        // density roll. Offsetting the seed keeps them uncorrelated.
+        const jx = hash2f(i, j, seed);
+        const jz = hash2f(i, j, (seed ^ 0x51ed270b) | 0);
+        const roll = hash2f(i, j, (seed ^ 0x2545f491) | 0);
+
+        const x = -halfWidth + (i + jx) * cell;
+        const z = (j + jz) * cell;
+        if (!field.contains(x, z)) continue;
+
+        const ax = Math.abs(x);
+        // Thinner on the groomed line, never bare: a clear corridor is the "wide but
+        // featureless" failure that makes route choice meaningless.
+        const density = ax <= corridorHalf ? species.corridorDensityScale : 1;
+        if (roll > density) continue;
+
+        if (!species.surfaces.includes(field.surface(x, z))) continue;
+        field.normal(x, z, normal);
+        if (normal.y < species.minNormalY) continue;
+
+        // Clear of authored launches. A tree in a landing zone punishes the player for
+        // doing exactly what the terrain invited, which is the least fair thing a course
+        // can do -- and unlike a tree in the open, it is not a choice they made.
+        let nearLaunch = false;
+        for (const launch of launches) {
+          const clearX = launch.radiusX * rules.launchClearance;
+          const clearZ = launch.radiusZ * rules.launchClearance;
+          const dx = (x - launch.x) / clearX;
+          const dz = (z - launch.z) / clearZ;
+          if (dx * dx + dz * dz < 1) {
+            nearLaunch = true;
+            break;
+          }
+        }
+        if (nearLaunch) continue;
+
+        // Reuse `roll` for size: it is already decorrelated from position, and a fourth
+        // hash would buy nothing.
+        const variance = (roll * 2 - 1) * species.heightVariance;
+        out.push({
+          x,
+          z,
+          y: field.height(x, z),
+          radius: species.radius,
+          height: Math.max(0.5, species.height + variance),
+          rotation: jx * Math.PI * 2,
+          speciesIndex: s,
+        });
+      }
+    }
+  }
+
+  return out;
+}
+
+function toObstacles(scatter: readonly ScatterInstance[]): Obstacles {
+  const positions = new Float32Array(scatter.length * 2);
+  const radii = new Float32Array(scatter.length);
+  const species = new Uint8Array(scatter.length);
+  for (let i = 0; i < scatter.length; i++) {
+    positions[i * 2] = scatter[i].x;
+    positions[i * 2 + 1] = scatter[i].z;
+    radii[i] = scatter[i].radius;
+    species[i] = scatter[i].speciesIndex;
+  }
+  return new Obstacles({ positions, radii, species, count: scatter.length });
 }
 
 /**

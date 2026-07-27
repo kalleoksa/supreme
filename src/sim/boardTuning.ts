@@ -71,6 +71,19 @@ export interface BoardTuning {
   LAND_ALIGN_MAX: number;
   LAND_ROT_TOL: number;
   IMPACT_MAX: number;
+  /**
+   * Speed at which hitting an obstacle stops being a scrape and becomes a crash, in m/s.
+   *
+   * Below it the rider is slowed and deflected, which keeps a clipped branch from ending an
+   * otherwise good run. That asymmetry is what makes trees inside the ridable corridor a
+   * *choice* rather than a minefield: brushing one at speed costs time, hitting one squarely
+   * costs the run.
+   */
+  OBSTACLE_CRASH_SPEED: number;
+  /** Speed kept when scraping an obstacle below the crash threshold. */
+  OBSTACLE_SCRAPE_KEEP: number;
+  /** Half-width of the rider's collision disc, in metres. */
+  BODY_RADIUS: number;
   LAND_BOOST: number;
   CRASH_RECOVER: number;
   CRASH_PENALTY: number;
@@ -216,6 +229,9 @@ export const DEFAULT_TUNING: BoardTuning = {
   LAND_ALIGN_MAX: 55,
   LAND_ROT_TOL: 25,
   IMPACT_MAX: 14.0,
+  OBSTACLE_CRASH_SPEED: 11.0,
+  OBSTACLE_SCRAPE_KEEP: 0.55,
+  BODY_RADIUS: 0.4,
   LAND_BOOST: 1.8,
   CRASH_RECOVER: 1.4,
   CRASH_PENALTY: 500,

@@ -26,7 +26,7 @@ import { v3, type Vec2 } from '../../src/core/vec3.js';
  */
 
 const DT = 1 / 120;
-const MAX_SECONDS = 150;
+const MAX_SECONDS = 200;
 
 interface BotResult {
   finished: boolean;
@@ -40,7 +40,7 @@ interface BotResult {
   finalProgress: number;
 }
 
-function runBot(): BotResult {
+function runBot(withTrees = true): BotResult {
   const slope = buildTestSlope();
   const field = slope.field;
   const progressField = new ProgressField(field, { finish: slope.finish });
@@ -68,6 +68,10 @@ function runBot(): BotResult {
   race.releaseGate();
 
   const ctx = createStepContext(DEFAULT_TUNING);
+  // The trees are what the game actually runs with, so the bot rides through them. It has no
+  // avoidance at all -- it steers straight down the progress gradient -- so this is close to
+  // the worst case a course can present.
+  if (withTrees) ctx.obstacles = slope.obstacles;
   const input = createInputState();
   const dir: Vec2 = { x: 0, z: 0 };
 
@@ -135,23 +139,35 @@ describe('headless bot run', () => {
   });
 
   it('takes a plausible time for a 1.2 km descent', () => {
-    // Measured at 40.8 s over 1140 m of course, with splits at 14.1 / 23.4 / 32.1 s.
-    // That is a mean of 28.5 m/s against the plan's ~25 m/s target for a 20% grade,
-    // which is what tucking most of the way down a 22%-average course should buy.
+    // Measured at 57.6 s through the trees, against 40.8 s on bare terrain, with a mean of
+    // 20.2 m/s against 28.5. That gap is the price of having no tree avoidance whatsoever,
+    // and a human steering around them should come in well under it.
     //
-    // The window is wide on purpose. It is not a tuning assertion -- it exists to catch
-    // a course that has turned into either a stall (grade gone too shallow) or a rocket
-    // (too steep), and either failure moves this number by far more than a tuning pass
-    // would.
+    // The window is wide on purpose. It is not a tuning assertion -- it exists to catch a
+    // course that has turned into either a stall (grade gone too shallow) or a rocket (too
+    // steep), and either failure moves this number by far more than a tuning pass would.
     expect(result.time).toBeGreaterThan(25);
-    expect(result.time).toBeLessThan(120);
+    expect(result.time).toBeLessThan(150);
   });
 
   it('holds a speed the grade profile was tuned for', () => {
-    // Measured: mean 28.5 m/s, peak 35.1 m/s, no crashes on the way down.
-    expect(result.meanSpeed).toBeGreaterThan(15);
+    // Measured: mean 20.2 m/s through the trees, peak 34.8 m/s.
+    expect(result.meanSpeed).toBeGreaterThan(12);
     expect(result.topSpeed).toBeGreaterThan(25);
     expect(result.topSpeed).toBeLessThanOrEqual(DEFAULT_TUNING.MAX_SPEED);
+  });
+
+  it('is slower through the trees than on bare terrain, but still gets down', () => {
+    // Both halves matter. Trees have to cost something or they are decoration; they must not
+    // cost the run, or the routes they exist to create stop being routes. Measured 57.6 s
+    // against 40.8 s -- and this is the assertion that would have caught the per-tick scrape
+    // penalty, which took the bot to 127.2 s at a mean of 9.1 m/s.
+    const bare = runBot(false);
+    expect(bare.finished).toBe(true);
+    expect(result.finished).toBe(true);
+    expect(result.time).toBeGreaterThan(bare.time);
+    expect(result.time).toBeLessThan(bare.time * 2.2);
+    expect(result.meanSpeed).toBeGreaterThan(bare.meanSpeed * 0.5);
   });
 
   it('records every split, in order', () => {

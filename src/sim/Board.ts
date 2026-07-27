@@ -1,12 +1,13 @@
 import { angleDelta, approach, clamp, clamp01, expDecay, lerp } from '../core/math.js';
 import { WORLD_UP, cross3, dot3, normalize3, projectOntoPlane3, v3 } from '../core/vec3.js';
 import type { InputState } from '../input/InputState.js';
-import { TrickState, type BoardState } from './BoardState.js';
+import { FailReason, LandQuality, TrickState, type BoardState } from './BoardState.js';
 import type { BoardTuning } from './boardTuning.js';
 import { EventBuffer, SimEventKind } from './events.js';
 import { resolveOllie } from './Ollie.js';
 import { stepTrick } from './Trick.js';
 import { impactSpeedInto, resolveLanding } from './Landing.js';
+import { NO_OBSTACLES, type Obstacles } from './Obstacles.js';
 import type { TerrainSampler } from './Terrain.js';
 
 const GRAVITY = 9.81;
@@ -58,10 +59,18 @@ export interface BoardStepContext {
    * the thing the simulation branches on and partial edge stays a bonus.
    */
   carveAnalog: number;
+  /**
+   * Static obstacles to collide against.
+   *
+   * Defaults to empty rather than being required, so the physics tests that predate scatter
+   * keep running against bare terrain -- which is what keeps their golden state hash a
+   * statement about the ride rather than about where a tree happens to stand.
+   */
+  obstacles: Obstacles;
 }
 
 export function createStepContext(tuning: BoardTuning): BoardStepContext {
-  return { tuning, events: new EventBuffer(), carveAnalog: 1 };
+  return { tuning, events: new EventBuffer(), carveAnalog: 1, obstacles: NO_OBSTACLES };
 }
 
 export function stepBoard(
@@ -245,6 +254,11 @@ export function stepBoard(
   state.pos.y += state.vel.y * dt;
   state.pos.z += state.vel.z * dt;
 
+  // ------------------------------------------- 6b. Obstacles
+  // After integration, so the test is against where the board actually is. Resolved as a
+  // position correction plus a velocity change, the same shape as the ground snap.
+  resolveObstacles(state, ctx);
+
   if (state.crashTimer > 0) {
     state.crashTimer = Math.max(0, state.crashTimer - dt);
     if (state.crashTimer === 0 && state.trickState === TrickState.Crashed) {
@@ -262,6 +276,98 @@ export function stepBoard(
   state.noseY = terrain.height(state.pos.x + nfx * t.NOSE_LEN, state.pos.z + nfz * t.NOSE_LEN);
   state.tailY = terrain.height(state.pos.x - nfx * t.TAIL_LEN, state.pos.z - nfz * t.TAIL_LEN);
 }
+
+/**
+ * Collide with static obstacles.
+ *
+ * The asymmetry here is the design, not an optimisation. Below `OBSTACLE_CRASH_SPEED` the
+ * rider is pushed clear, slowed and deflected; at or above it, the run is over for
+ * `CRASH_RECOVER` seconds. That is what makes trees inside the ridable corridor a *choice*
+ * rather than a minefield -- clipping one on a committed line through the gully costs time
+ * you can still race with, and hitting one squarely costs the run. If every contact were a
+ * crash, the only correct play would be to avoid the trees entirely, and the route they
+ * exist to create would stop being a route.
+ *
+ * Deflection uses the radial direction out of the trunk, which is the one piece of
+ * information a cylinder has. It reads as glancing off, and more usefully it never leaves
+ * the rider inside the obstacle to collide again on the next tick.
+ */
+function resolveObstacles(state: BoardState, ctx: BoardStepContext): void {
+  const t = ctx.tuning;
+  const obstacles = ctx.obstacles;
+  if (obstacles.count === 0) return;
+
+  const hit = obstacles.firstHit(state.pos.x, state.pos.z, t.BODY_RADIUS);
+  if (hit < 0) return;
+
+  const ox = obstacles.positions[hit * 2];
+  const oz = obstacles.positions[hit * 2 + 1];
+  let nx = state.pos.x - ox;
+  let nz = state.pos.z - oz;
+  const dist = Math.hypot(nx, nz);
+  if (dist < 1e-4) {
+    // Dead centre: pick a direction rather than dividing by zero. Straight back up the
+    // board's own heading is the least surprising choice.
+    nx = -Math.cos(state.yaw);
+    nz = -Math.sin(state.yaw);
+  } else {
+    nx /= dist;
+    nz /= dist;
+  }
+
+  // Push clear of the trunk, with a margin. Landing exactly on the boundary means the next
+  // tick's steering re-penetrates immediately.
+  const reach = obstacles.radii[hit] + t.BODY_RADIUS + 1e-3;
+  state.pos.x = ox + nx * reach;
+  state.pos.z = oz + nz * reach;
+
+  // Speed into the obstacle is what decides the outcome.
+  const into = -(state.vel.x * nx + state.vel.z * nz);
+  if (into <= 0) return; // already moving away; the push-out was enough
+
+  if (into >= t.OBSTACLE_CRASH_SPEED) {
+    state.vel.x *= 0.1;
+    state.vel.y *= 0.1;
+    state.vel.z *= 0.1;
+    state.crashTimer = t.CRASH_RECOVER;
+    state.trickState = TrickState.Crashed;
+    state.lastFailReason = FailReason.HitObstacle;
+    state.lastLandQuality = LandQuality.Crash;
+    state.score = Math.max(0, state.score - t.CRASH_PENALTY);
+    state.trickRot = 0;
+    state.trickId = 0;
+    state.trickHoldTime = 0;
+    ctx.events.push(SimEventKind.Crash, state.tick, FailReason.HitObstacle, into, 0);
+    return;
+  }
+
+  // A scrape. Cancel the component into the trunk -- a tree cannot be entered -- then charge
+  // for the impact *in proportion to it*.
+  //
+  // The flat penalty this replaced was measured and it was wrong, badly. A rider steering
+  // into a trunk stays in contact for many ticks, and a per-tick multiplier compounds: the
+  // headless bot came down the mountain with 8,551 scrape events and a mean speed of 9.1 m/s
+  // against 28.5 with no trees. Trees had stopped being an obstacle and become a grinder.
+  //
+  // Scaling by `into / OBSTACLE_CRASH_SPEED` fixes the shape rather than the magnitude. Once
+  // the rider is resting or sliding along a trunk the into-component is near zero each tick,
+  // so contact costs nothing extra and only the genuine impact is paid for -- which is also
+  // the honest model of brushing past a tree.
+  const keep = lerp(1, t.OBSTACLE_SCRAPE_KEEP, clamp01(into / t.OBSTACLE_CRASH_SPEED));
+  state.vel.x += nx * into;
+  state.vel.z += nz * into;
+  state.vel.x *= keep;
+  state.vel.z *= keep;
+
+  // Only report a contact worth reporting. Sliding along a trunk would otherwise flood the
+  // event ring buffer and swamp the HUD with a hit the player never felt.
+  if (into > SCRAPE_REPORT_SPEED) {
+    ctx.events.push(SimEventKind.Crash, state.tick, FailReason.HitObstacle, into, 1);
+  }
+}
+
+/** Into-speed below which a contact is not worth telling the player about, in m/s. */
+const SCRAPE_REPORT_SPEED = 2;
 
 /**
  * The pump: the reward half of the carve model.

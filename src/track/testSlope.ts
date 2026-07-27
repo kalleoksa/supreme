@@ -1,5 +1,6 @@
 import type { Vec2 } from '../core/vec3.js';
 import type { Heightfield } from '../sim/Heightfield.js';
+import type { Obstacles } from '../sim/Obstacles.js';
 import { generateTrack, type GeneratedTrack } from './generate.js';
 import { TEST_SLOPE } from './tracks/testSlope.js';
 
@@ -18,6 +19,8 @@ import { TEST_SLOPE } from './tracks/testSlope.js';
 
 export interface TestSlope {
   field: Heightfield;
+  /** Static obstacles, for the physics step context. */
+  obstacles: Obstacles;
   /** Suggested spawn, on the centreline just below the top edge. */
   startX: number;
   startZ: number;

@@ -168,7 +168,7 @@ test.describe('riding', () => {
       h.simulate(120 * 5, { steerY: 1 });
     });
     await page.keyboard.down('ArrowRight');
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(2000);
     const turning = await page.evaluate(() => {
       const b = window.__GAME!.game!.board;
       return { yawRate: b.yawRate };
@@ -180,10 +180,18 @@ test.describe('riding', () => {
     // is small and the skid weathervane cancels much of it. The rate is the direct
     // response to the input and is unambiguous.
     //
-    // Positive means turning toward +yaw, which is what ArrowRight asks for. The steer
-    // axis ramps rather than snapping, so a non-zero rate also proves poll() runs every
-    // frame, since that is where the ramp is computed.
-    expect(turning.yawRate).toBeGreaterThan(0.2);
+    // Positive means turning toward +yaw, which is what ArrowRight asks for. The steer axis
+    // ramps rather than snapping, so a non-zero rate also proves poll() runs every frame,
+    // since that is where the ramp is computed.
+    //
+    // The *sign* is the structural fact, and the threshold is deliberately far below what
+    // this measures in practice. The magnitude cannot be asserted tightly here: both the
+    // steer ramp and the yaw ramp advance per simulation step, and how many steps fit in two
+    // seconds of wall time is a property of the machine. An earlier version demanded > 0.2
+    // and passed until scatter added a hundred thousand triangles, at which point SwiftShader
+    // ran slightly fewer frames and it landed on exactly 0.2 -- a performance assertion
+    // wearing a behaviour assertion's clothes, which is the one thing this suite must not do.
+    expect(turning.yawRate).toBeGreaterThan(0.02);
   });
 
   test('respawn returns the rider to the start gate', async ({ page }) => {
