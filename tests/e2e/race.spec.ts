@@ -150,6 +150,27 @@ test.describe('racing', () => {
     expect(result.after.time).toBeGreaterThan(3);
   });
 
+  test('records a ghost of the run at the size the format promises', async ({ page }) => {
+    const info = await page.evaluate(() => {
+      const h = window.__GAME!;
+      h.respawn();
+      h.simulate(120 * 150, { steerY: 1 });
+      const race = h.raceState()!;
+      const ghost = h.ghostInfo()!;
+      // Serializing in the browser proves the wire format survives the real bundle.
+      const bytes = h.game!.ghost.serialize().byteLength;
+      return { race, ghost, bytes };
+    });
+
+    // 20 Hz over the run, give or take the frame captured on the first step.
+    const expected = info.race.finishTime * 20;
+    expect(info.ghost.frames).toBeGreaterThan(expected - 5);
+    expect(info.ghost.frames).toBeLessThan(expected + 5);
+    // 25 bytes a frame: a 40-second run is well under 25 KB.
+    expect(info.bytes).toBe(info.ghost.bytes);
+    expect(info.bytes).toBeLessThan(32 * 1024);
+  });
+
   test('draws the finish and split markers without blowing the draw budget', async ({ page }) => {
     await page.waitForTimeout(1500);
     const info = await page.evaluate(() => {

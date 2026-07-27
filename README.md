@@ -209,6 +209,27 @@ shoulders are what turn a wandering rider back, and `tests/unit/botRun.test.ts`
 asserts a bot gets down the whole course needing at most one recovery — so a
 shoulder that stops doing its job fails a test rather than a run.
 
+### Ghosts record transforms, not input
+
+Replaying a recorded input stream through the same simulation would cost a few
+hundred bytes a run and verify the physics for free. It is not safe: ECMA-262
+leaves the precision of `sin`, `cos`, `pow` and `exp` implementation-defined, and
+the board physics uses `Math.exp` for frame-rate-independent decay. So an input
+replay is not guaranteed bit-identical across browsers, or across two versions of
+one browser — and a ghost that silently desyncs on someone else's machine is worse
+than no ghost.
+
+`src/race/GhostRecorder.ts` stores where the rider _was_, at 20 Hz: position as
+float32, riding pose as an int16 quaternion, trick rotation kept separate so a
+viewer can spin the board without spinning the camera, speed, and a flags byte.
+25 bytes a frame, ~45 KB for a 90-second run. Recording is driven from the
+simulation step rather than the frame, so a 30 fps machine captures the same ghost
+a 144 Hz one does — asserted, along with the wire format round-trip.
+
+The determinism disciplines stay anyway (fixed timestep, seeded integer noise, no
+wall clock in the sim). They cost nothing and are what a verified leaderboard would
+need later; this just does not depend on them today.
+
 ### Terrain is tuned against measurements
 
 Crest spacing along the fall line, grade distribution, and stall/uphill fractions
@@ -239,7 +260,7 @@ and tricks, a timer and a finish line.
 - [ ] Phase 6 — the authored track
       — race logic done (progress field, countdown, splits, sub-frame finish,
       out-of-bounds recovery, stored best); `TrackSpec` and `alpine01` still to come
-- [ ] Phase 7 — ghost recording
+- [x] Phase 7 — ghost recording (transform capture; playback is M2)
 - [ ] Phase 8 — audio, comfort settings, feel pass
 
 Phase 8 is not polish. It is where the game becomes good or doesn't, and it is

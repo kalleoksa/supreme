@@ -71,6 +71,14 @@ export interface GameHarness {
   sampleHeight(x: number, z: number): number | null;
   /** Compact snapshot of the race, for asserting the run actually completes. */
   raceState(): RaceSnapshot | null;
+  /**
+   * Size of the recorded ghost.
+   *
+   * Playback is M2, so what matters now is that the recorder ran at all and that the run
+   * costs what the format says it should. `game.ghost.serialize()` gives the buffer itself
+   * for inspecting a run that went somewhere it should not have.
+   */
+  ghostInfo(): { frames: number; bytes: number } | null;
   /** Terrain height under (x, z) as the *drawn mesh* sees it. */
   raycastHeight(x: number, z: number): number | null;
   /**
@@ -162,6 +170,11 @@ export function installHarness(): GameHarness {
     sampleHeight(x, z) {
       if (!harness.game) return null;
       return harness.game.field.height(x, z);
+    },
+    ghostInfo() {
+      const ghost = harness.game?.ghost;
+      if (!ghost) return null;
+      return { frames: ghost.count, bytes: ghost.byteLength };
     },
     raceState() {
       const race = harness.game?.race;

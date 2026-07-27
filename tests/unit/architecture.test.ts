@@ -83,7 +83,18 @@ describe('terrain generation portability', () => {
   // not required there.
   const generationFiles = collectFiles('src/track').concat(collectFiles('src/core'));
 
-  it.each(generationFiles.filter((f) => !f.endsWith('math.ts')))(
+  // `src/core` is swept wholesale rather than by an allowlist, because a new helper is far
+  // more likely to be reached by the generator than not, and the failure mode of missing
+  // one is a golden hash that quietly stops being portable. These are the files that are
+  // demonstrably *not* on the generation path, each exempt for a stated reason:
+  //
+  //  - math.ts     exports expDecay, which is Math.exp on purpose. Used by the board
+  //                physics for frame-rate-independent decay, never by the generator.
+  //  - quat.ts     orientation for ghost recording. Ghosts are transform captures, so
+  //                nothing about them needs to be reproducible on another engine.
+  const NOT_GENERATION = ['math.ts', 'quat.ts'];
+
+  it.each(generationFiles.filter((f) => !NOT_GENERATION.some((name) => f.endsWith(name))))(
     '%s avoids implementation-defined transcendentals',
     (rel) => {
       const src = stripComments(readFileSync(join(ROOT, rel), 'utf8'));

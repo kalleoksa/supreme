@@ -33,6 +33,7 @@ import { KeyboardSource } from '../input/KeyboardSource.js';
 import { GamepadSource } from '../input/GamepadSource.js';
 import { ProgressField } from '../race/ProgressField.js';
 import { Race, type BestRun } from '../race/Race.js';
+import { GhostRecorder } from '../race/GhostRecorder.js';
 import { loadBestRun, saveBestRun } from './bestRun.js';
 import { Hud } from '../hud/Hud.js';
 import '../hud/hud.css';
@@ -91,6 +92,7 @@ export class Game implements LoopHandlers {
   readonly tuning: BoardTuning;
   readonly progressField: ProgressField;
   readonly race: Race;
+  readonly ghost = new GhostRecorder();
 
   private readonly prevBoard: BoardState;
   /** Interpolated pose handed to the renderer; never fed back into the sim. */
@@ -228,6 +230,7 @@ export class Game implements LoopHandlers {
 
     // A respawn is a new run: back to the start gate and the 3-2-1.
     this.race.reset();
+    this.ghost.reset();
   }
 
   private onDebugKey = (e: KeyboardEvent): void => {
@@ -282,6 +285,10 @@ export class Game implements LoopHandlers {
       copyBoardState(this.prevBoard, this.board);
       this.snapCamera = true;
     }
+
+    // Recorded from the simulation step rather than the frame, so a 30 fps display captures
+    // exactly the same ghost a 144 Hz one does.
+    if (!held) this.ghost.record(this.board, this.race.time, dt);
 
     // Fell off the world entirely. The race's own out-of-bounds recovery handles
     // wandering off the course; this is the case where there is no terrain to sample.
@@ -448,6 +455,7 @@ export class Game implements LoopHandlers {
       if (this.race.prepare(FIXED_DT)) break;
       stepBoard(this.board, input, this.field, FIXED_DT, this.stepCtx);
       this.race.observe(this.board, this.field, FIXED_DT, this.stepCtx.events);
+      this.ghost.record(this.board, this.race.time, FIXED_DT);
       // Consume the release edges after the first step, matching how the real input
       // router delivers exactly one edge per physical release.
       input.carve.released = false;
