@@ -1,11 +1,27 @@
 import { defineConfig, devices } from '@playwright/test';
+import { existsSync } from 'node:fs';
 
-// Chromium is preinstalled at PLAYWRIGHT_BROWSERS_PATH. Its revision will not
-// always match the one this @playwright/test version wants to download, so point
-// at the binary explicitly rather than running `playwright install` -- the
-// structural assertions in this suite do not care about the exact Chromium build.
-// Override with WHITEOUT_CHROMIUM if a machine keeps Chromium somewhere else.
-const CHROMIUM = process.env.WHITEOUT_CHROMIUM ?? '/opt/pw-browsers/chromium';
+/**
+ * Which Chromium to launch.
+ *
+ * Some development containers ship a preinstalled Chromium whose revision does not
+ * match the one this @playwright/test version would download. Pointing at that
+ * binary avoids a pointless download, and the structural assertions in this suite
+ * do not care about the exact build.
+ *
+ * But CI runners have no such binary, so a hardcoded path would fail there. Resolve
+ * it only if it actually exists and otherwise fall through to Playwright's own
+ * resolution, which is what `playwright install chromium` populates.
+ */
+function findChromium(): string | undefined {
+  const candidates = [process.env.WHITEOUT_CHROMIUM, '/opt/pw-browsers/chromium'];
+  for (const path of candidates) {
+    if (path && existsSync(path)) return path;
+  }
+  return undefined;
+}
+
+const CHROMIUM = findChromium();
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -22,7 +38,9 @@ export default defineConfig({
       use: {
         ...devices['Desktop Chrome'],
         launchOptions: {
-          executablePath: CHROMIUM,
+          // Omitted entirely when no preinstalled binary was found, so Playwright
+          // uses whatever `playwright install chromium` put in place.
+          ...(CHROMIUM ? { executablePath: CHROMIUM } : {}),
           args: [
             // Software GL: enough to validate structure (draw calls, shader
             // compilation, non-blank framebuffer). Never assert fps here.
