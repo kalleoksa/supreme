@@ -380,26 +380,25 @@
   }
 }
 
+/* Also `display`, and for the same reason as the settings panel: a starved animation timeline
+ * on a slow machine would leave a finished run's time faded out to nothing. The result of a
+ * race is not something to risk on a transition. */
 .hud-results {
   position: absolute;
   left: 50%;
   top: 50%;
-  transform: translate(-50%, -50%) scale(0.96);
+  transform: translate(-50%, -50%);
   min-width: min(20rem, 70vw);
   padding: 1.4rem 1.8rem;
   text-align: center;
   background: rgb(6 10 16 / 78%);
   border: 1px solid rgb(255 255 255 / 12%);
   border-radius: 8px;
-  opacity: 0;
-  transition:
-    opacity 180ms ease,
-    transform 300ms cubic-bezier(0.2, 1.2, 0.4, 1);
+  display: none;
 }
 
 .hud-results.visible {
-  opacity: 1;
-  transform: translate(-50%, -50%) scale(1);
+  display: block;
 }
 
 .hud-results-label {
@@ -452,6 +451,120 @@
   font-size: 0.7rem;
   letter-spacing: 0.22em;
   opacity: 0.5;
+}
+
+/* ---- Comfort settings. Ships in production, unlike the tuning panel. ---- */
+
+.settings-button {
+  position: absolute;
+  right: 1.1rem;
+  bottom: 1.1rem;
+  /* The HUD root disables pointer events so the canvas stays clickable through it; anything
+     interactive has to opt back in. */
+  pointer-events: auto;
+  font: inherit;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: #cfe3f7;
+  background: rgb(8 14 22 / 55%);
+  border: 1px solid rgb(255 255 255 / 16%);
+  border-radius: 4px;
+  padding: 0.35rem 0.6rem;
+  cursor: pointer;
+  opacity: 0.5;
+  transition: opacity 120ms ease;
+}
+
+.settings-button:hover,
+.settings-button.active {
+  opacity: 1;
+}
+
+/* Shown and hidden with `display`, deliberately, with no transition.
+ *
+ * The first version faded in via opacity and visibility, and under software GL it did not
+ * appear at all: the transitions sat at `currentTime: 0` more than a second after the class
+ * changed, because CSS transitions advance on the document timeline and the timeline is
+ * starved when a frame takes hundreds of milliseconds. The panel was interactive and
+ * invisible.
+ *
+ * That is unacceptable here specifically. A player on a weak GPU is the most likely person to
+ * need comfort settings and the least likely to be able to see a faded-in panel, so this one
+ * element trades a nicety for being certain to appear. The transient HUD flashes keep their
+ * transitions -- a missed fade on a score popup costs nothing.
+ */
+.settings-panel {
+  position: absolute;
+  right: 1.1rem;
+  bottom: 3.4rem;
+  width: min(22rem, 80vw);
+  padding: 0.9rem 1rem;
+  pointer-events: auto;
+  background: rgb(6 10 16 / 92%);
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 6px;
+  font-size: 0.78rem;
+  display: none;
+}
+
+.settings-panel.visible {
+  display: block;
+}
+
+.settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  opacity: 0.7;
+  margin-bottom: 0.6rem;
+}
+
+.settings-close {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0 0.2rem;
+}
+
+.settings-row {
+  display: grid;
+  grid-template-columns: 1fr auto 2.6rem;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.28rem 0;
+  cursor: pointer;
+}
+
+.settings-row input[type='range'] {
+  width: 6.5rem;
+  accent-color: #7fd0ff;
+}
+
+.settings-row input[type='checkbox'] {
+  accent-color: #7fd0ff;
+  /* Spans the slider and readout columns, so the controls line up down the panel. */
+  grid-column: 2 / span 2;
+  justify-self: start;
+}
+
+.settings-row em {
+  font-style: normal;
+  text-align: right;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-note {
+  margin-top: 0.7rem;
+  font-size: 0.68rem;
+  line-height: 1.4;
+  opacity: 0.55;
 }
 
 /* ---- Dev-only tuning panel. Not present in production builds. ---- */

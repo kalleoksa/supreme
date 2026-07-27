@@ -222,6 +222,33 @@ section that kills a run — so the stall check consults the feature mask. That 
 found by the check firing on the tuning slope at z=986, which is exactly the
 leading edge of the roller stamped at z=1010.
 
+### Comfort settings ship, and are not gated behind a transition
+
+Motion sickness tolerance varies enormously, and a camera that makes someone ill is
+unplayable for them no matter how good the game is. Four knobs — field-of-view
+widening, shake, camera distance, camera roll — reachable from the riding HUD with no
+menu, since someone who starts feeling queasy thirty seconds in should not have to
+quit to find the fix. Camera roll defaults to **zero**: it is the single strongest
+nausea trigger in a chase camera, so it is opt-in only. When the OS asks for reduced
+motion, shake starts at zero and FOV-with-speed starts off.
+
+The panel is shown with `display`, not a fade, and that is a bug fix rather than a
+style preference. The first version transitioned opacity and visibility, and under
+software GL it never appeared at all: CSS transitions advance on the document
+animation timeline, and a frame that takes hundreds of milliseconds starves it — the
+transitions sat at `currentTime: 0` more than a second after the class changed. The
+panel was interactive and invisible. A player on a weak GPU is the most likely person
+to need comfort settings and the least likely to be able to see a faded-in panel, so
+this element trades the nicety for certainty. The results panel got the same
+treatment, because a run's finish time is not something to risk on a transition.
+
+Worth knowing if you write tests here: **Playwright's `toBeVisible()` does not catch
+this** — its visibility rules ignore `opacity: 0`. Only reading the computed style
+does, which is what those tests now do.
+
+Stored settings are clamped on load rather than trusted. A hand-edited
+`distanceScale` of 500 would put the camera in orbit with no visible cause.
+
 ### Trees are not cleared from the racing line
 
 This is the design rule most likely to be "tidied up" by someone reasonably assuming
@@ -342,7 +369,7 @@ and tricks, a timer and a finish line.
       `alpine01` with its three route choices — which the feel gate below
       deliberately blocks, because content on a bad ride is wasted content.
 - [x] Phase 7 — ghost recording (transform capture; playback is M2)
-- [ ] Phase 8 — audio, comfort settings, feel pass
+- [ ] Phase 8 — audio, tuning, feel pass (comfort settings done)
 
 Phase 8 is not polish. It is where the game becomes good or doesn't, and it is
 gated on seven concrete criteria — chief among them that holding a five-second

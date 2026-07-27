@@ -87,6 +87,17 @@ test.describe('racing', () => {
 
     const results = page.locator('.hud-results');
     await expect(results).toHaveClass(/visible/);
+
+    // Rendered, not merely classed. The result of a race is not something to risk on a CSS
+    // transition: on a machine slow enough to starve the animation timeline, an opacity fade
+    // never completes and the finish time stays invisible. `toBeVisible()` would not catch it,
+    // because Playwright's visibility rules ignore `opacity: 0`.
+    const style = await page.evaluate(() => {
+      const cs = getComputedStyle(document.querySelector('.hud-results')!);
+      return { display: cs.display, opacity: cs.opacity };
+    });
+    expect(style.display).not.toBe('none');
+    expect(Number(style.opacity)).toBe(1);
     // `0:41.23` shape: the run took tens of seconds, not zero.
     await expect(page.locator('.hud-results-time')).toHaveText(/^0:[0-9]{2}\.[0-9]{2}$/);
     await expect(page.locator('.hud-time')).toHaveText(/^0:[0-9]{2}\.[0-9]{2}$/);

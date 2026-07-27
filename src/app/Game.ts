@@ -8,7 +8,7 @@ import { Renderer } from '../render/Renderer.js';
 import { Environment } from '../render/Environment.js';
 import { TerrainMesh } from '../render/TerrainMesh.js';
 import { RiderView } from '../render/RiderView.js';
-import { ChaseCamera } from '../render/ChaseCamera.js';
+import { ChaseCamera, type CameraComfort } from '../render/ChaseCamera.js';
 import { Spray } from '../render/Spray.js';
 import { WorldHints } from '../render/WorldHints.js';
 import { RaceMarkers } from '../render/RaceMarkers.js';
@@ -37,6 +37,8 @@ import { ProgressField } from '../race/ProgressField.js';
 import { Race, type BestRun } from '../race/Race.js';
 import { GhostRecorder } from '../race/GhostRecorder.js';
 import { loadBestRun, saveBestRun } from './bestRun.js';
+import { loadSettings, saveSettings, type Settings } from './settings.js';
+import { SettingsPanel } from '../hud/SettingsPanel.js';
 import { Hud } from '../hud/Hud.js';
 import '../hud/hud.css';
 
@@ -121,6 +123,8 @@ export class Game implements LoopHandlers {
   private paused = false;
   private readonly scriptInput = createInputState();
   private best: BestRun | undefined;
+  readonly settings: Settings;
+  private readonly settingsPanel: SettingsPanel;
   private snapCamera = false;
 
   constructor(options: GameOptions) {
@@ -200,7 +204,14 @@ export class Game implements LoopHandlers {
     );
     this.renderer.scene.add(this.scatter.group);
 
+    this.settings = loadSettings();
+    // The camera owns the knobs; the panel and storage only move them.
+    this.chase.comfort = this.settings.comfort;
+
     this.hud = new Hud(options.hud);
+    this.settingsPanel = new SettingsPanel(this.hud.root, this.settings, () => {
+      saveSettings(this.settings);
+    });
 
     this.flyCamera = new FlyCamera(this.renderer.camera, options.canvas);
     this.flyCamera.enabled = false;
@@ -224,6 +235,17 @@ export class Game implements LoopHandlers {
     }
 
     this.loop = new Loop(new RealClock(), this);
+  }
+
+  /**
+   * The camera's live comfort settings.
+   *
+   * Exposed because these are the one part of the game that has to work for someone who is
+   * already feeling ill, so the browser tests assert that moving a knob actually reaches the
+   * camera rather than only updating a checkbox.
+   */
+  get chaseComfort(): CameraComfort {
+    return this.chase.comfort;
   }
 
   /** Place the rider at the start gate, on the surface, facing downhill. */
@@ -497,6 +519,7 @@ export class Game implements LoopHandlers {
     this.input.dispose();
     this.flyCamera.dispose();
     this.tuningPanel?.dispose();
+    this.settingsPanel.dispose();
     this.hud.dispose();
     this.spray.dispose();
     this.scatter.dispose();
