@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { Loop, type LoopHandlers } from './Loop.js';
 import { RealClock } from './Clock.js';
-import { FIXED_DT } from './config.js';
+import { FIXED_DT, TRACK_ID } from './config.js';
 import { createInputState } from '../input/InputState.js';
 
 import { Renderer } from '../render/Renderer.js';
@@ -11,6 +11,7 @@ import { RiderView } from '../render/RiderView.js';
 import { ChaseCamera } from '../render/ChaseCamera.js';
 import { Spray } from '../render/Spray.js';
 import { WorldHints } from '../render/WorldHints.js';
+import { RaceMarkers } from '../render/RaceMarkers.js';
 import { timeToGround } from '../sim/Ollie.js';
 import { SimEventKind } from '../sim/events.js';
 import type { DebugPanel } from '../hud/DebugPanel.js';
@@ -30,6 +31,9 @@ import { DEFAULT_TUNING, cloneTuning, type BoardTuning } from '../sim/boardTunin
 import { InputRouter } from '../input/InputRouter.js';
 import { KeyboardSource } from '../input/KeyboardSource.js';
 import { GamepadSource } from '../input/GamepadSource.js';
+import { ProgressField } from '../race/ProgressField.js';
+import { Race, type BestRun } from '../race/Race.js';
+import { loadBestRun, saveBestRun } from './bestRun.js';
 import { Hud } from '../hud/Hud.js';
 import '../hud/hud.css';
 
@@ -85,6 +89,8 @@ export class Game implements LoopHandlers {
 
   readonly board: BoardState;
   readonly tuning: BoardTuning;
+  readonly progressField: ProgressField;
+  readonly race: Race;
 
   private readonly prevBoard: BoardState;
   /** Interpolated pose handed to the renderer; never fed back into the sim. */
@@ -97,6 +103,7 @@ export class Game implements LoopHandlers {
   private readonly chase: ChaseCamera;
   private readonly spray: Spray;
   private readonly hints: WorldHints;
+  readonly markers: RaceMarkers;
   private readonly hud: Hud;
   private readonly flyCamera: FlyCamera;
   private tuningPanel: DebugPanel | undefined;
@@ -106,6 +113,8 @@ export class Game implements LoopHandlers {
   private debugAccum = 0;
   private paused = false;
   private readonly scriptInput = createInputState();
+  private best: BestRun | undefined;
+  private snapCamera = false;
 
   constructor(options: GameOptions) {
     this.renderer = new Renderer(options.canvas, {
@@ -131,6 +140,18 @@ export class Game implements LoopHandlers {
     this.tuning = cloneTuning(DEFAULT_TUNING);
     this.stepCtx = createStepContext(this.tuning);
 
+    // Baked once at load, from the same heightfield the physics reads. A few
+    // milliseconds, and it is what makes progress, splits, bounds and the return arrow
+    // all work on whatever line the player picks.
+    this.progressField = new ProgressField(this.field, { finish: this.slope.finish });
+    this.race = new Race(this.progressField, {
+      x: this.slope.startX,
+      y: this.field.height(this.slope.startX, this.slope.startZ) + this.tuning.RIDE_HEIGHT,
+      z: this.slope.startZ,
+      yaw: this.slope.startYaw,
+    });
+    this.best = loadBestRun(TRACK_ID);
+
     this.board = createBoardState();
     this.prevBoard = createBoardState();
     this.viewBoard = createBoardState();
@@ -151,6 +172,15 @@ export class Game implements LoopHandlers {
 
     this.hints = new WorldHints(this.field, this.tuning);
     this.renderer.scene.add(this.hints.group);
+
+    this.markers = new RaceMarkers(
+      this.field,
+      this.environment,
+      this.progressField,
+      this.slope.finish,
+      this.race.rules.splits,
+    );
+    this.renderer.scene.add(this.markers.group);
 
     this.hud = new Hud(options.hud);
 
@@ -195,6 +225,9 @@ export class Game implements LoopHandlers {
     // sails down the mountain from wherever it was, which was measured at 29 m above
     // the rider after a jump of a hundred metres.
     this.chase.reset(this.board);
+
+    // A respawn is a new run: back to the start gate and the 3-2-1.
+    this.race.reset();
   }
 
   private onDebugKey = (e: KeyboardEvent): void => {
@@ -232,10 +265,26 @@ export class Game implements LoopHandlers {
     this.stepCtx.carveAnalog =
       this.input.activeSourceId === 'gamepad' ? this.gamepad.carveAnalog : 1;
 
-    copyBoardState(this.prevBoard, this.board);
-    stepBoard(this.board, input, this.field, dt, this.stepCtx);
+    // The race owns the clock and decides whether the board is released. During the
+    // count and after the finish nothing simulates at all -- freezing the board rather
+    // than zeroing the input keeps the gate honest, because a rider cannot pre-load a
+    // charge against a simulation that is not running.
+    const held = this.race.prepare(dt);
 
-    // Fell off the world, or wandered somewhere the field does not cover.
+    copyBoardState(this.prevBoard, this.board);
+    if (!held) stepBoard(this.board, input, this.field, dt, this.stepCtx);
+
+    const resetsBefore = this.race.resets;
+    this.race.observe(this.board, this.field, dt, this.stepCtx.events);
+    if (this.race.resets !== resetsBefore) {
+      // A recovery teleports the board. Interpolating across it would draw one frame of
+      // the rider smeared back up the mountain, and the camera would sail after them.
+      copyBoardState(this.prevBoard, this.board);
+      this.snapCamera = true;
+    }
+
+    // Fell off the world entirely. The race's own out-of-bounds recovery handles
+    // wandering off the course; this is the case where there is no terrain to sample.
     if (!this.field.contains(this.board.pos.x, this.board.pos.z)) this.respawn();
   }
 
@@ -253,14 +302,27 @@ export class Game implements LoopHandlers {
     this.spray.update(this.viewBoard, frameDt);
     this.hints.update(this.viewBoard);
 
+    if (this.snapCamera) {
+      this.chase.reset(this.board);
+      this.snapCamera = false;
+    }
     if (this.flyCamera.enabled) this.flyCamera.update(frameDt);
     else this.chase.update(this.viewBoard, frameDt);
+
+    // The best time as it stood *before* this frame. Both the split deltas and the
+    // results panel compare against it, so it has to be read before a finish in this
+    // same frame overwrites it -- otherwise every run reports itself as dead even with
+    // its own best.
+    const reference = this.best;
 
     // Drain before clearing: events are the only channel from the simulation to
     // presentation, and a 30 fps display must not miss one that happened on an
     // intermediate substep.
     this.stepCtx.events.forEach((e) => {
-      if (e.kind === SimEventKind.Crash) {
+      if (e.kind === SimEventKind.Finish) {
+        const result = this.race.result(this.board);
+        if (result) this.best = saveBestRun(TRACK_ID, result, this.best);
+      } else if (e.kind === SimEventKind.Crash) {
         // Shake only on a crash. Anywhere else it costs readability for nothing.
         this.chase.shake();
       } else if (e.kind === SimEventKind.Land && e.a >= 2) {
@@ -274,7 +336,8 @@ export class Game implements LoopHandlers {
         this.hints.recordPop(e.b);
       }
     });
-    this.hud.drain(this.stepCtx.events);
+    this.hud.drain(this.stepCtx.events, reference?.splits);
+    this.hud.updateRace(this.race, this.board, frameDt, reference);
     this.hud.update(
       this.viewBoard,
       frameDt,
@@ -311,6 +374,7 @@ export class Game implements LoopHandlers {
       b.grounded
         ? `ground slope ${((b.slopeAngle * 180) / Math.PI).toFixed(0)}deg  surf ${b.ground.surface}  grip ${b.ground.grip.toFixed(2)}`
         : `AIR    ${b.airTime.toFixed(2)}s  apex ${b.apexHeight.toFixed(1)}m`,
+      `race   ${RACE_STATE_TEXT[this.race.state]} t=${this.race.time.toFixed(2)}  p=${(this.race.progress * 100).toFixed(1)}%  oob ${this.race.oobDistance.toFixed(0)}m  resets ${this.race.resets}`,
       this.flyCamera.enabled ? 'camera FLY (F to return)' : 'camera CHASE (F to fly)',
     ].join('\n');
 
@@ -372,9 +436,18 @@ export class Game implements LoopHandlers {
 
     this.stepCtx.carveAnalog = script.carveAnalog ?? 1;
 
+    // Release the start gate. Everything that calls this -- diagnostic captures, the
+    // browser tests, the headless bot -- wants the rider moving, and sitting out a
+    // three-second count in a harness that deliberately ignores the wall clock would
+    // just be 360 steps of nothing.
+    this.race.releaseGate();
+
     for (let i = 0; i < steps; i++) {
       copyBoardState(this.prevBoard, this.board);
+      // Stops at the finish rather than riding on past it.
+      if (this.race.prepare(FIXED_DT)) break;
       stepBoard(this.board, input, this.field, FIXED_DT, this.stepCtx);
+      this.race.observe(this.board, this.field, FIXED_DT, this.stepCtx.events);
       // Consume the release edges after the first step, matching how the real input
       // router delivers exactly one edge per physical release.
       input.carve.released = false;
@@ -402,6 +475,7 @@ export class Game implements LoopHandlers {
     this.tuningPanel?.dispose();
     this.hud.dispose();
     this.spray.dispose();
+    this.markers.dispose();
     this.hints.dispose();
     this.riderView.dispose();
     this.terrain.dispose();
@@ -420,6 +494,8 @@ export class Game implements LoopHandlers {
 
 /** Reused across respawns; nothing in the render path allocates. */
 const spawnNormal = v3();
+
+const RACE_STATE_TEXT = ['COUNT', 'RUN', 'DONE'];
 
 function lerpScalar(a: number, b: number, t: number): number {
   return a + (b - a) * t;

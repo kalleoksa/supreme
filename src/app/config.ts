@@ -35,3 +35,12 @@ export const MAX_PIXEL_RATIO = 1.5;
 
 /** Fog / far-plane distance in metres. Also the terrain LOD budget driver. */
 export const VIEW_DISTANCE = 900;
+
+/**
+ * Identifier of the track being ridden, used to key the stored best time.
+ *
+ * Still the Phase 1-5 tuning slope, and named as such rather than as track one: when
+ * the authored track arrives it gets its own id, and times set on the test slope should
+ * not be presented as times on it.
+ */
+export const TRACK_ID = 'testslope';

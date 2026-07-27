@@ -1,5 +1,6 @@
 import { clamp01, smoothstep } from '../core/math.js';
 import { fbm2s } from '../core/noise.js';
+import type { Vec2 } from '../core/vec3.js';
 import { Heightfield } from '../sim/Heightfield.js';
 import { SurfaceId, TerrainFlag } from '../sim/Terrain.js';
 
@@ -84,6 +85,16 @@ export interface TestSlopeOptions {
   seed?: number;
   /** Half-width of the groomed corridor in metres. */
   corridorHalfWidth?: number;
+  /**
+   * Half-width of the *in-bounds* area in metres, defaulting to 1.35x the groomed
+   * corridor.
+   *
+   * Grooming and bounds are deliberately different numbers. The cross profile makes
+   * the shoulders genuinely ridable -- drifting wide is supposed to cost speed rather
+   * than end the run -- so treating the groomed edge as the boundary would penalise a
+   * line the terrain invites. Bounds sit out where the shoulder stops being a choice.
+   */
+  boundsHalfWidth?: number;
 }
 
 export interface TestSlope {
@@ -93,6 +104,8 @@ export interface TestSlope {
   startZ: number;
   /** Heading in radians: 0 = +X, so +Z (downhill) is PI/2. */
   startYaw: number;
+  /** Finish line as two world-space endpoints, spanning the in-bounds width. */
+  finish: [Vec2, Vec2];
 }
 
 function gradeAt(z: number): number {
@@ -117,6 +130,7 @@ export function buildTestSlope(options: TestSlopeOptions = {}): TestSlope {
   const widthMetres = options.widthMetres ?? 400;
   const seed = options.seed ?? 0x5eed1a;
   const corridorHalfWidth = options.corridorHalfWidth ?? 90;
+  const boundsHalfWidth = options.boundsHalfWidth ?? corridorHalfWidth * 1.35;
 
   const cols = Math.round(widthMetres / spacing) + 1;
   const rows = Math.round(lengthMetres / spacing) + 1;
@@ -268,7 +282,12 @@ export function buildTestSlope(options: TestSlopeOptions = {}): TestSlope {
     flags,
   });
 
-  assignSurfaces(field, corridorHalfWidth, seed);
+  assignSurfaces(field, corridorHalfWidth, boundsHalfWidth, seed);
+
+  // The finish sits short of the far edge, so there is runout to coast through rather
+  // than a wall to stop against -- and so the progress flood has passable cells on
+  // both sides of the line.
+  const finishZ = lengthMetres - 30;
 
   // Surface bytes changed after construction; nothing derived from them is cached,
   // but normals are, so leave them alone. (assignSurfaces does not touch heights.)
@@ -277,6 +296,10 @@ export function buildTestSlope(options: TestSlopeOptions = {}): TestSlope {
     startX: 0,
     startZ: 6,
     startYaw: Math.PI / 2,
+    finish: [
+      { x: -boundsHalfWidth, z: finishZ },
+      { x: boundsHalfWidth, z: finishZ },
+    ],
   };
 }
 
@@ -308,7 +331,12 @@ function smoothConstrained(
  * heights change, and it means the corridor is always groomed no matter how the
  * grade profile is edited.
  */
-function assignSurfaces(field: Heightfield, corridorHalfWidth: number, seed: number): void {
+function assignSurfaces(
+  field: Heightfield,
+  corridorHalfWidth: number,
+  boundsHalfWidth: number,
+  seed: number,
+): void {
   const { cols, rows, spacing, originX, originZ, surfaces, flagBytes, normals } = field;
 
   for (let j = 0; j < rows; j++) {
@@ -320,6 +348,7 @@ function assignSurfaces(field: Heightfield, corridorHalfWidth: number, seed: num
 
       const ax = Math.abs(x);
       const inCorridor = ax <= corridorHalfWidth;
+      const inBounds = ax <= boundsHalfWidth;
 
       let surface: SurfaceId;
       if (ny < 0.5) {
@@ -349,7 +378,7 @@ function assignSurfaces(field: Heightfield, corridorHalfWidth: number, seed: num
       surfaces[idx] = surface;
 
       let f = 0;
-      if (inCorridor) f |= TerrainFlag.InCorridor;
+      if (inBounds) f |= TerrainFlag.InCorridor;
       if (ny < 0.45) f |= TerrainFlag.Cliff;
       flagBytes[idx] = f;
     }

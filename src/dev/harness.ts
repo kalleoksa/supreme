@@ -17,6 +17,20 @@ export interface RiderSnapshot {
   simTime: number;
 }
 
+export interface RaceSnapshot {
+  /** 0 counting down, 1 running, 2 finished. */
+  state: number;
+  time: number;
+  countdown: number;
+  progress: number;
+  splits: number[];
+  finishTime: number;
+  oob: boolean;
+  oobDistance: number;
+  resets: number;
+  flaggedJumps: number;
+}
+
 /**
  * Test surface exposed on `window.__GAME`.
  *
@@ -55,6 +69,8 @@ export interface GameHarness {
   riderState(): RiderSnapshot | null;
   /** Terrain height under (x, z) as the *sampler* sees it. */
   sampleHeight(x: number, z: number): number | null;
+  /** Compact snapshot of the race, for asserting the run actually completes. */
+  raceState(): RaceSnapshot | null;
   /** Terrain height under (x, z) as the *drawn mesh* sees it. */
   raycastHeight(x: number, z: number): number | null;
   /**
@@ -146,6 +162,22 @@ export function installHarness(): GameHarness {
     sampleHeight(x, z) {
       if (!harness.game) return null;
       return harness.game.field.height(x, z);
+    },
+    raceState() {
+      const race = harness.game?.race;
+      if (!race) return null;
+      return {
+        state: race.state,
+        time: race.time,
+        countdown: race.countdown,
+        progress: race.progress,
+        splits: race.splitTimes.slice(),
+        finishTime: race.finishTime,
+        oob: race.oob,
+        oobDistance: race.oobDistance,
+        resets: race.resets,
+        flaggedJumps: race.flaggedJumps,
+      };
     },
     raycastHeight(x, z) {
       if (!harness.game) return null;

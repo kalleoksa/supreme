@@ -173,6 +173,42 @@ scripted `InputState` directly and bypasses the router entirely.
 There are now tests that press a real key and assert the simulation responds. If you add
 gameplay tests, at least one of them must go through the real input path.
 
+### Race progress is a baked geodesic field, not a centreline
+
+Projecting the rider onto a spline down the middle of the course would contradict
+the freedom-of-line pillar outright: it produces nonsense the moment someone takes
+a branch, cuts a bowl or rides a shoulder, and it makes "shortcut or cheat" an
+unanswerable question.
+
+Instead `src/race/ProgressField.ts` floods the in-bounds terrain with geodesic
+distance to the finish — Dijkstra on a 4 m grid, no diagonal corner-cutting — and
+normalizes it. Progress is then a bilinear lookup that works on _any_ line. One
+artifact answers a surprising number of questions:
+
+| Question                    | Answer                                                                                                                    |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| How far along am I?         | `progressAt(x, z)`, valid on every route                                                                                  |
+| Shortcut or cheat?          | The flood respects the mask, so cutting off-course earns no progress at all — it _is_ out of bounds, with no special case |
+| Where is the split?         | A progress threshold, not a trigger volume a wide face lets you ride around                                               |
+| Where does its banner go?   | Traced from the `progress == threshold` isoline, so the marker cannot drift out of sync with the checkpoint               |
+| Which way is down-course?   | `−∇progress`: the wrong-way arrow and the return-to-course arrow, free                                                    |
+| Is the course even ridable? | `reachable` — a broken route fails the build, not a play session                                                          |
+
+The finish is interpolated _inside_ the physics step
+(`t = tPrev + dt·(threshold − pPrev)/(p − pPrev)`). Without that the clock
+quantizes to the 8.3 ms timestep, which is 0.2 m of course at speed — enough for
+two identical runs to report different times.
+
+Out of bounds gives three seconds of vignette and countdown, then puts the rider
+back at the furthest valid pose from a 10 Hz ring buffer. **The clock keeps
+running** — that is the whole punishment. No menu, no fade, no confirmation: an
+interruption breaks flow far worse than losing three seconds does.
+
+Containment is geometry, never an invisible wall. The cross profile's rising
+shoulders are what turn a wandering rider back, and `tests/unit/botRun.test.ts`
+asserts a bot gets down the whole course needing at most one recovery — so a
+shoulder that stops doing its job fails a test rather than a run.
+
 ### Terrain is tuned against measurements
 
 Crest spacing along the fall line, grade distribution, and stall/uphill fractions
@@ -201,6 +237,8 @@ and tricks, a timer and a finish line.
 - [x] Phase 4 — charged ollie: the mechanic this was all built around
 - [x] Phase 5 — tricks and landing, with named failure reasons
 - [ ] Phase 6 — the authored track
+      — race logic done (progress field, countdown, splits, sub-frame finish,
+      out-of-bounds recovery, stored best); `TrackSpec` and `alpine01` still to come
 - [ ] Phase 7 — ghost recording
 - [ ] Phase 8 — audio, comfort settings, feel pass
 

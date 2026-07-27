@@ -1,3 +1,4 @@
+import { formatDelta, formatRaceTime, RaceState, type BestRun, type Race } from '../race/Race.js';
 import { FailReason, LandQuality, TrickState, type BoardState } from '../sim/BoardState.js';
 import { SimEventKind, type EventBuffer } from '../sim/events.js';
 import { FAIL_REASON_TEXT, LAND_QUALITY_TEXT } from '../sim/Landing.js';
@@ -32,6 +33,13 @@ export class Hud {
   private readonly bannerTitle: HTMLElement;
   private readonly bannerReason: HTMLElement;
   private readonly scoreEl: HTMLElement;
+  private readonly countdownEl: HTMLElement;
+  private readonly splitEl: HTMLElement;
+  private readonly warnEl: HTMLElement;
+  private readonly resultsEl: HTMLElement;
+  private readonly resultsTime: HTMLElement;
+  private readonly resultsBest: HTMLElement;
+  private readonly resultsRows: HTMLElement;
 
   private lastSpeed = '';
   private lastTime = '';
@@ -42,6 +50,12 @@ export class Hud {
   private lastCharge = -1;
   private lastRibbon = '';
   private lastScore = '';
+  private lastCountdown = '';
+  private lastWarn = '';
+  private splitTimer = 0;
+  private splitFrames = 0;
+  private hasRace = false;
+  private lastResultTime = Number.NaN;
   private bannerTimer = 0;
   private bannerFrames = 0;
   private pumpTimer = 0;
@@ -76,6 +90,16 @@ export class Hud {
       <div class="hud-banner"><div class="hud-banner-title"></div><div class="hud-banner-reason"></div></div>
       <div class="hud-score">0</div>
       <div class="hud-edge"><div class="hud-edge-fill"></div></div>
+      <div class="hud-countdown"></div>
+      <div class="hud-split"></div>
+      <div class="hud-warn"></div>
+      <div class="hud-results">
+        <div class="hud-results-label">FINISH</div>
+        <div class="hud-results-time">--:--.--</div>
+        <div class="hud-results-best"></div>
+        <div class="hud-results-rows"></div>
+        <div class="hud-results-hint">R to run it again</div>
+      </div>
     `;
     parent.appendChild(this.root);
 
@@ -94,6 +118,13 @@ export class Hud {
     this.bannerTitle = this.root.querySelector('.hud-banner-title') as HTMLElement;
     this.bannerReason = this.root.querySelector('.hud-banner-reason') as HTMLElement;
     this.scoreEl = this.root.querySelector('.hud-score') as HTMLElement;
+    this.countdownEl = this.root.querySelector('.hud-countdown') as HTMLElement;
+    this.splitEl = this.root.querySelector('.hud-split') as HTMLElement;
+    this.warnEl = this.root.querySelector('.hud-warn') as HTMLElement;
+    this.resultsEl = this.root.querySelector('.hud-results') as HTMLElement;
+    this.resultsTime = this.root.querySelector('.hud-results-time') as HTMLElement;
+    this.resultsBest = this.root.querySelector('.hud-results-best') as HTMLElement;
+    this.resultsRows = this.root.querySelector('.hud-results-rows') as HTMLElement;
   }
 
   /**
@@ -140,9 +171,37 @@ export class Hud {
    * and connect the two. A mechanic nobody notices does not exist, so this is not
    * decoration.
    */
-  drain(events: EventBuffer): void {
+  drain(events: EventBuffer, reference?: readonly number[]): void {
     events.forEach((e) => {
-      if (e.kind === SimEventKind.PumpBoost) {
+      if (e.kind === SimEventKind.Checkpoint) {
+        // A split is only informative next to something. With no reference run the bare
+        // time still tells the player the checkpoint registered, which matters on a wide
+        // face where there was no gate to ride through.
+        const index = e.a;
+        const at = e.b;
+        const previous = reference?.[index];
+        const delta =
+          previous !== undefined && previous >= 0 ? `  ${formatDelta(at - previous)}` : '';
+        this.splitEl.textContent = `SPLIT ${index + 1}  ${formatRaceTime(at)}${delta}`;
+        this.splitEl.classList.toggle(
+          'ahead',
+          previous !== undefined && previous >= 0 && at < previous,
+        );
+        this.splitEl.classList.toggle(
+          'behind',
+          previous !== undefined && previous >= 0 && at >= previous,
+        );
+        this.splitTimer = Hud.FLASH_TIME * 4;
+        this.splitFrames = Hud.FLASH_MIN_FRAMES;
+      } else if (e.kind === SimEventKind.OutOfBounds && e.a === 1) {
+        // The recovery itself, not the warning. Named, like every other failure.
+        this.bannerTitle.textContent = 'OUT OF BOUNDS';
+        this.bannerReason.textContent = 'returned to course · clock still running';
+        this.bannerEl.classList.add('crash');
+        this.bannerEl.classList.remove('perfect');
+        this.bannerTimer = Hud.FLASH_TIME * 2.4;
+        this.bannerFrames = Hud.FLASH_MIN_FRAMES;
+      } else if (e.kind === SimEventKind.PumpBoost) {
         this.pumpTimer = Hud.FLASH_TIME;
         this.pumpFrames = Hud.FLASH_MIN_FRAMES;
       } else if (e.kind === SimEventKind.Land) {
@@ -204,10 +263,14 @@ export class Hud {
       this.lastSpeed = speed;
     }
 
-    const time = state.time.toFixed(2);
-    if (time !== this.lastTime) {
-      this.timeEl.textContent = time;
-      this.lastTime = time;
+    // The clock belongs to the race when there is one. Falling back to simulated time
+    // keeps the readout meaningful in the bare sandbox the tuning harness uses.
+    if (!this.hasRace) {
+      const time = state.time.toFixed(2);
+      if (time !== this.lastTime) {
+        this.timeEl.textContent = time;
+        this.lastTime = time;
+      }
     }
 
     // The edge meter fills while carving. Its job is to teach: a player who reads no
@@ -307,6 +370,102 @@ export class Hud {
       // a crash rather than a landing.
       this.ttgFill.classList.toggle('imminent', timeToGround < 0.35);
     }
+  }
+
+  /**
+   * The race layer: count, clock, split flash, boundary warning, results.
+   *
+   * Separate from `update` because it is the only part of the HUD that knows a race
+   * exists. The bare test slope in the tuning harness runs without one, and keeping the
+   * split means the riding HUD never has to check whether a race is attached.
+   */
+  updateRace(race: Race, board: BoardState, dt: number, best: BestRun | undefined): void {
+    this.hasRace = true;
+
+    const clock =
+      race.state === RaceState.Finished
+        ? formatRaceTime(race.finishTime)
+        : formatRaceTime(race.time);
+    if (clock !== this.lastTime) {
+      this.timeEl.textContent = clock;
+      this.lastTime = clock;
+    }
+
+    // The count. Whole seconds, then GO -- a decimal here reads as a stopwatch rather
+    // than an instruction, and the number the player needs is "how many more".
+    let countdown = '';
+    if (race.state === RaceState.Countdown) {
+      countdown = String(Math.max(1, Math.ceil(race.countdown)));
+    } else if (race.time < 0.7) {
+      countdown = 'GO';
+    }
+    if (countdown !== this.lastCountdown) {
+      this.countdownEl.textContent = countdown;
+      this.lastCountdown = countdown;
+      // Re-trigger the pop animation by forcing a reflow of the class.
+      this.countdownEl.classList.remove('visible');
+      void this.countdownEl.offsetWidth;
+    }
+    this.countdownEl.classList.toggle('visible', countdown !== '');
+    this.countdownEl.classList.toggle('go', countdown === 'GO');
+
+    if (this.splitTimer > 0 || this.splitFrames > 0) {
+      this.splitTimer = Math.max(0, this.splitTimer - dt);
+      this.splitFrames = Math.max(0, this.splitFrames - 1);
+      this.splitEl.classList.add('visible');
+    } else {
+      this.splitEl.classList.remove('visible');
+    }
+
+    // Boundary and wrong-way warning.
+    //
+    // Both are the same slot because both mean "you are not on a run any more", and
+    // showing two competing instructions at 100 km/h helps nobody. Out of bounds wins:
+    // it has a deadline.
+    let warn = '';
+    if (race.state === RaceState.Running) {
+      if (race.oob) {
+        const left = Math.max(0, race.rules.oobGrace - race.oobTime);
+        warn = `OUT OF BOUNDS · ${left.toFixed(1)}`;
+      } else if (race.headingAlignment(board) < -0.25) {
+        warn = 'WRONG WAY';
+      }
+    }
+    if (warn !== this.lastWarn) {
+      this.warnEl.textContent = warn;
+      this.lastWarn = warn;
+    }
+    this.warnEl.classList.toggle('visible', warn !== '');
+    this.root.classList.toggle('oob', race.oob && race.state === RaceState.Running);
+
+    const finished = race.state === RaceState.Finished;
+    this.resultsEl.classList.toggle('visible', finished);
+    if (!finished || this.lastResultTime === race.finishTime) return;
+    this.lastResultTime = race.finishTime;
+
+    this.resultsTime.textContent = formatRaceTime(race.finishTime);
+    const isBest = best === undefined || race.finishTime <= best.time;
+    this.resultsEl.classList.toggle('best', isBest);
+    this.resultsBest.textContent = isBest
+      ? 'PERSONAL BEST'
+      : `best ${formatRaceTime(best.time)}  ${formatDelta(race.finishTime - best.time)}`;
+
+    const rows = race.splitTimes.map((t, i) => {
+      const delta = race.splitDelta(i, best?.splits);
+      const compare = delta === undefined ? '' : `<span>${formatDelta(delta)}</span>`;
+      return `<div class="hud-results-row"><span>SPLIT ${i + 1}</span><span>${formatRaceTime(t)}</span>${compare}</div>`;
+    });
+    if (board.score > 0) {
+      rows.push(
+        `<div class="hud-results-row"><span>SCORE</span><span>${board.score.toLocaleString('en-US')}</span></div>`,
+      );
+    }
+    if (race.resets > 0) {
+      rows.push(
+        `<div class="hud-results-row"><span>RESETS</span><span>${race.resets}</span></div>`,
+      );
+    }
+    this.resultsRows.innerHTML = rows.join('');
   }
 
   dispose(): void {
