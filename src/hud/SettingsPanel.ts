@@ -1,4 +1,4 @@
-import { COMFORT_RANGES, type Settings } from '../app/settings.js';
+import { AUDIO_RANGES, COMFORT_RANGES, type Settings } from '../app/settings.js';
 
 /**
  * The comfort settings panel.
@@ -25,8 +25,8 @@ export class SettingsPanel {
     this.button = document.createElement('button');
     this.button.className = 'settings-button';
     this.button.type = 'button';
-    this.button.textContent = 'COMFORT';
-    this.button.setAttribute('aria-label', 'Comfort settings');
+    this.button.textContent = 'SETTINGS';
+    this.button.setAttribute('aria-label', 'Comfort and audio settings');
     this.button.addEventListener('click', () => this.toggle());
     parent.appendChild(this.button);
 
@@ -34,7 +34,7 @@ export class SettingsPanel {
     this.root.className = 'settings-panel';
     this.root.innerHTML = `
       <div class="settings-head">
-        <span>COMFORT</span>
+        <span>SETTINGS</span>
         <button type="button" class="settings-close" aria-label="Close">x</button>
       </div>
       <div class="settings-body"></div>
@@ -82,6 +82,29 @@ export class SettingsPanel {
       () => this.settings.comfort.rollDegrees,
       (v) => {
         this.settings.comfort.rollDegrees = v;
+      },
+    );
+
+    const audio = document.createElement('div');
+    audio.className = 'settings-group';
+    audio.textContent = 'AUDIO';
+    body.appendChild(audio);
+
+    this.addToggle(
+      body,
+      'Sound',
+      () => this.settings.audio.enabled,
+      (v) => {
+        this.settings.audio.enabled = v;
+      },
+    );
+    this.addSlider(
+      body,
+      'Volume',
+      AUDIO_RANGES.volume,
+      () => this.settings.audio.volume,
+      (v) => {
+        this.settings.audio.volume = v;
       },
     );
 

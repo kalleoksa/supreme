@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { COMFORT_RANGES, sanitizeComfort } from '../../src/app/settings.js';
+import {
+  AUDIO_RANGES,
+  COMFORT_RANGES,
+  sanitizeAudio,
+  sanitizeComfort,
+} from '../../src/app/settings.js';
+import { DEFAULT_AUDIO } from '../../src/audio/Audio.js';
 import { DEFAULT_COMFORT } from '../../src/render/ChaseCamera.js';
 
 /**
@@ -74,5 +80,34 @@ describe('comfort settings sanitizer', () => {
       expect(DEFAULT_COMFORT[key as keyof typeof COMFORT_RANGES]).toBeGreaterThanOrEqual(range[0]);
       expect(DEFAULT_COMFORT[key as keyof typeof COMFORT_RANGES]).toBeLessThanOrEqual(range[1]);
     }
+  });
+});
+
+describe('audio settings sanitizer', () => {
+  it('passes valid settings through', () => {
+    expect(sanitizeAudio({ enabled: false, volume: 0.3 }, DEFAULT_AUDIO)).toEqual({
+      enabled: false,
+      volume: 0.3,
+    });
+  });
+
+  it('falls back to the defaults for anything unusable', () => {
+    expect(sanitizeAudio(null, DEFAULT_AUDIO)).toEqual(DEFAULT_AUDIO);
+    expect(sanitizeAudio('loud', DEFAULT_AUDIO)).toEqual(DEFAULT_AUDIO);
+    expect(sanitizeAudio({}, DEFAULT_AUDIO)).toEqual(DEFAULT_AUDIO);
+  });
+
+  it('clamps the volume to 0..1', () => {
+    expect(sanitizeAudio({ volume: 99 }, DEFAULT_AUDIO).volume).toBe(AUDIO_RANGES.volume[1]);
+    expect(sanitizeAudio({ volume: -5 }, DEFAULT_AUDIO).volume).toBe(AUDIO_RANGES.volume[0]);
+    expect(sanitizeAudio({ volume: Number.NaN }, DEFAULT_AUDIO).volume).toBe(DEFAULT_AUDIO.volume);
+  });
+
+  it('starts sound on, at less than full volume', () => {
+    // Conservative on purpose: the failure mode of too quiet is "I turned it up", and the
+    // failure mode of too loud is "I turned it off".
+    expect(DEFAULT_AUDIO.enabled).toBe(true);
+    expect(DEFAULT_AUDIO.volume).toBeGreaterThan(0);
+    expect(DEFAULT_AUDIO.volume).toBeLessThan(1);
   });
 });

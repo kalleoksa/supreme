@@ -53,8 +53,8 @@ test.describe('comfort settings', () => {
     expect(Number(style.opacity)).toBe(1);
     expect(style.visibility).toBe('visible');
     expect(style.height).toBeGreaterThan(50);
-    // Four knobs: fov toggle, shake, distance, roll.
-    expect(style.rows).toBe(4);
+    // Six rows: fov toggle, shake, distance, roll, then sound and volume.
+    expect(style.rows).toBe(6);
   });
 
   test('opens on the keyboard shortcut too', async ({ page }) => {

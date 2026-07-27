@@ -560,6 +560,16 @@
   font-variant-numeric: tabular-nums;
 }
 
+.settings-group {
+  margin-top: 0.6rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid rgb(255 255 255 / 10%);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  opacity: 0.5;
+}
+
 .settings-note {
   margin-top: 0.7rem;
   font-size: 0.68rem;

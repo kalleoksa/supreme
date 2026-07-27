@@ -79,6 +79,21 @@ export interface GameHarness {
    * for inspecting a run that went somewhere it should not have.
    */
   ghostInfo(): { frames: number; bytes: number } | null;
+  /**
+   * Audio graph state and the live gain values.
+   *
+   * The mix cannot be judged from a test -- that is a listening job -- but the *wiring* can:
+   * that the context reaches `running` after a gesture, that wind rises with speed and hiss
+   * with skid, and that muting actually reaches the master gain.
+   */
+  audioState(): {
+    state: string;
+    running: boolean;
+    master: number;
+    wind: number;
+    hiss: number;
+    windCutoff: number;
+  } | null;
   /** Terrain height under (x, z) as the *drawn mesh* sees it. */
   raycastHeight(x: number, z: number): number | null;
   /**
@@ -175,6 +190,11 @@ export function installHarness(): GameHarness {
       const ghost = harness.game?.ghost;
       if (!ghost) return null;
       return { frames: ghost.count, bytes: ghost.byteLength };
+    },
+    audioState() {
+      const audio = harness.game?.audio;
+      if (!audio) return null;
+      return { state: audio.contextState, running: audio.running, ...audio.levels() };
     },
     raceState() {
       const race = harness.game?.race;

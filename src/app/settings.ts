@@ -1,3 +1,4 @@
+import { DEFAULT_AUDIO, type AudioSettings } from '../audio/Audio.js';
 import { clamp } from '../core/math.js';
 import { DEFAULT_COMFORT, type CameraComfort } from '../render/ChaseCamera.js';
 
@@ -19,6 +20,7 @@ const KEY = 'whiteout.settings.v1';
 
 export interface Settings {
   comfort: CameraComfort;
+  audio: AudioSettings;
 }
 
 /**
@@ -38,6 +40,7 @@ export function defaultSettings(): Settings {
       shakeScale: reduceMotion ? 0 : DEFAULT_COMFORT.shakeScale,
       fovWithSpeed: reduceMotion ? false : DEFAULT_COMFORT.fovWithSpeed,
     },
+    audio: { ...DEFAULT_AUDIO },
   };
 }
 
@@ -47,6 +50,8 @@ export const COMFORT_RANGES = {
   distanceScale: [0.7, 1.8],
   rollDegrees: [0, 10],
 } as const;
+
+export const AUDIO_RANGES = { volume: [0, 1] } as const;
 
 /** A stored number, clamped to its range, or the fallback when it is not usable at all. */
 function num(value: unknown, fallback: number, range: readonly [number, number]): number {
@@ -66,6 +71,15 @@ export function sanitizeComfort(raw: unknown, base: CameraComfort): CameraComfor
   };
 }
 
+export function sanitizeAudio(raw: unknown, base: AudioSettings): AudioSettings {
+  if (typeof raw !== 'object' || raw === null) return { ...base };
+  const v = raw as Partial<AudioSettings>;
+  return {
+    enabled: typeof v.enabled === 'boolean' ? v.enabled : base.enabled,
+    volume: num(v.volume, base.volume, AUDIO_RANGES.volume),
+  };
+}
+
 export function loadSettings(): Settings {
   const base = defaultSettings();
   try {
@@ -73,8 +87,11 @@ export function loadSettings(): Settings {
     if (raw === null) return base;
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== 'object' || parsed === null) return base;
-    const comfort = (parsed as { comfort?: unknown }).comfort;
-    return { comfort: sanitizeComfort(comfort, base.comfort) };
+    const stored = parsed as { comfort?: unknown; audio?: unknown };
+    return {
+      comfort: sanitizeComfort(stored.comfort, base.comfort),
+      audio: sanitizeAudio(stored.audio, base.audio),
+    };
   } catch {
     return base;
   }

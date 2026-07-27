@@ -85,7 +85,8 @@ src/
   sim/      heightfield sampler, board physics, tricks, landing, race   [pure]
   track/    TrackSpec, the pure spec -> heightfield generator, the validator
   render/   three.js: terrain, rider, camera, environment
-  hud/      DOM overlay
+  hud/      DOM overlay, comfort and audio settings
+  audio/    procedural wind, edge hiss and one-shots; no assets
 ```
 
 ### Two decisions worth knowing before editing terrain
@@ -221,6 +222,39 @@ approach ramp genuinely climbs, and raw grade cannot tell that apart from a flat
 section that kills a run — so the stall check consults the feature mask. That was
 found by the check firing on the tuning slope at z=986, which is exactly the
 leading edge of the roller stamped at z=1010.
+
+### Audio is two procedural voices, and it is not decoration
+
+Edge hiss pitched by skid and wind pitched by speed are roughly 40% of the
+_perceived_ feel of carving — two continuous voices reacting to two numbers the
+simulation already computes, and the highest feel-per-hour item on the plan above any
+remaining visual work. A snowboarding game where carving is silent feels wrong in a
+way no amount of spray particles fixes.
+
+It also closes the ollie's feedback loop. Feel-gate criterion #2 asks that a good pop
+and a bad one be distinguishable **by ear** as well as by eye, which is unreachable
+without this: the pop is pitched by lip quality, deliberately over a wide spread, so
+a well-timed release and a mistimed one are not easily confused.
+
+Every voice is synthesised — white noise generated into a buffer at construction,
+shaped by filters. Same reasoning as the rider being built from primitives: no asset
+pipeline gets to block work on how the game feels, and "wind" and "snow hiss" are
+filtered noise anyway, which is what they physically are. Hiss gain is skid
+**squared**, so a slight slide is nearly silent and a real one is unmistakable; a
+linear ramp puts hiss under every ordinary turn and stops meaning anything.
+
+The `AudioContext` is built on the first real key press or click, never at boot.
+Browsers refuse to start one without a gesture, and this is easy to miss in
+development because after a hot reload the page has already been interacted with and
+audio just works.
+
+**The mix has not been heard by anyone.** The constants are conservative starting
+values — quiet rather than loud, since the failure mode of too quiet is "I turned it
+up" and of too loud is "I turned it off" — and balancing them is a listening job. The
+browser tests assert the wiring, not the sound: that the context reaches `running`
+after a gesture, that wind tracks speed and hiss tracks skid rather than each other,
+that muting reaches the master gain, and that a browser with no Web Audio still boots
+and rides.
 
 ### Comfort settings ship, and are not gated behind a transition
 
@@ -369,7 +403,8 @@ and tricks, a timer and a finish line.
       `alpine01` with its three route choices — which the feel gate below
       deliberately blocks, because content on a bad ride is wasted content.
 - [x] Phase 7 — ghost recording (transform capture; playback is M2)
-- [ ] Phase 8 — audio, tuning, feel pass (comfort settings done)
+- [ ] Phase 8 — tuning and the feel pass (audio and comfort settings done;
+      the audio _mix_ still needs a listen)
 
 Phase 8 is not polish. It is where the game becomes good or doesn't, and it is
 gated on seven concrete criteria — chief among them that holding a five-second

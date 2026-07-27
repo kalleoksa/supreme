@@ -39,6 +39,7 @@ import { GhostRecorder } from '../race/GhostRecorder.js';
 import { loadBestRun, saveBestRun } from './bestRun.js';
 import { loadSettings, saveSettings, type Settings } from './settings.js';
 import { SettingsPanel } from '../hud/SettingsPanel.js';
+import { Audio } from '../audio/Audio.js';
 import { Hud } from '../hud/Hud.js';
 import '../hud/hud.css';
 
@@ -124,6 +125,7 @@ export class Game implements LoopHandlers {
   private readonly scriptInput = createInputState();
   private best: BestRun | undefined;
   readonly settings: Settings;
+  readonly audio: Audio;
   private readonly settingsPanel: SettingsPanel;
   private snapCamera = false;
 
@@ -208,10 +210,23 @@ export class Game implements LoopHandlers {
     // The camera owns the knobs; the panel and storage only move them.
     this.chase.comfort = this.settings.comfort;
 
+    this.audio = new Audio(this.settings.audio);
+
     this.hud = new Hud(options.hud);
     this.settingsPanel = new SettingsPanel(this.hud.root, this.settings, () => {
       saveSettings(this.settings);
+      this.audio.applySettings();
+      // Moving the volume slider is itself a gesture, so it is a fine moment to start audio
+      // for a player who has not otherwise touched the keyboard.
+      this.audio.resume();
     });
+
+    // Browsers refuse to start an AudioContext without a user gesture, and one created at boot
+    // is born suspended. Listening for the first real interaction is the only reliable way in
+    // -- and this is easy to miss in development, because after a hot reload the page has
+    // already been interacted with and audio just works.
+    window.addEventListener('keydown', this.onFirstGesture, { once: true });
+    window.addEventListener('pointerdown', this.onFirstGesture, { once: true });
 
     this.flyCamera = new FlyCamera(this.renderer.camera, options.canvas);
     this.flyCamera.enabled = false;
@@ -270,6 +285,13 @@ export class Game implements LoopHandlers {
     this.race.reset();
     this.ghost.reset();
   }
+
+  private onFirstGesture = (): void => {
+    this.audio.resume();
+    // Whichever listener did not fire is now redundant.
+    window.removeEventListener('keydown', this.onFirstGesture);
+    window.removeEventListener('pointerdown', this.onFirstGesture);
+  };
 
   private onDebugKey = (e: KeyboardEvent): void => {
     if (e.code === 'KeyF') {
@@ -381,6 +403,7 @@ export class Game implements LoopHandlers {
         this.hints.recordPop(e.b);
       }
     });
+    this.audio.drain(this.stepCtx.events);
     this.hud.drain(this.stepCtx.events, reference?.splits);
     this.hud.updateRace(this.race, this.board, frameDt, reference);
     this.hud.update(
@@ -391,6 +414,9 @@ export class Game implements LoopHandlers {
         : timeToGround(this.board, this.field, 9.81 * this.tuning.AIR_GRAVITY_SCALE),
     );
     this.stepCtx.events.clear();
+
+    // Continuous voices follow the interpolated pose, like everything else on the render side.
+    this.audio.update(this.viewBoard, frameDt);
 
     const cam = this.renderer.camera.position;
     this.terrain.update(cam.x, cam.z);
@@ -519,6 +545,9 @@ export class Game implements LoopHandlers {
     this.input.dispose();
     this.flyCamera.dispose();
     this.tuningPanel?.dispose();
+    window.removeEventListener('keydown', this.onFirstGesture);
+    window.removeEventListener('pointerdown', this.onFirstGesture);
+    this.audio.dispose();
     this.settingsPanel.dispose();
     this.hud.dispose();
     this.spray.dispose();
